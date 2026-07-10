@@ -480,20 +480,40 @@ export class AssetRepository {
       );
       const nonDateTouched = lockableProperties.filter((property) => property in exifFieldsUpdate);
 
-      if (nonDateTouched.length > 0) {
+      if (Object.keys(exifFieldsUpdate).length > 0) {
+        // An upsert, not a plain UPDATE: a Timeline-visibility asset can genuinely have no asset_exif row yet
+        // (metadata extraction hasn't completed, or failed) - a bare UPDATE would silently affect zero rows in
+        // that case, and the caller would get back a false "success" with nothing actually written.
         await trx
-          .updateTable('asset_exif')
-          .set((eb) => ({
-            ...exifFieldsUpdate,
-            lockedProperties: distinctUnion(eb, 'lockedProperties', nonDateTouched),
-            // A pending owner SidecarWrite job reads asset_exif's CURRENT value at run time, not a value snapshotted
-            // at queue time. If the editor overwrites a property the owner already queued a write for, that job
-            // would otherwise flush the editor's value to the XMP sidecar the moment it runs. Cancelling the pending
-            // flag for exactly the properties just touched closes that window - nothing valid is left to flush for
-            // the owner's now-superseded edit, and the editor's replacement value must never reach disk regardless.
-            sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', nonDateTouched),
-          }))
-          .where('assetId', 'in', assetIds)
+          .insertInto('asset_exif')
+          .values(assetIds.map((assetId) => ({ assetId, ...exifFieldsUpdate, lockedProperties: nonDateTouched })))
+          .onConflict((oc) =>
+            oc.column('assetId').doUpdateSet((eb) => ({
+              // Only the value columns the caller actually set should be filtered by removeUndefinedKeys (against
+              // `edit`, which is where these keys live) - lockedProperties/sidecarWriteProperties are NOT keys on
+              // `edit` at all, so they must stay outside this call or removeUndefinedKeys strips them unconditionally.
+              ...removeUndefinedKeys(
+                {
+                  description: eb.ref('excluded.description'),
+                  rating: eb.ref('excluded.rating'),
+                  latitude: eb.ref('excluded.latitude'),
+                  longitude: eb.ref('excluded.longitude'),
+                  city: eb.ref('excluded.city'),
+                  state: eb.ref('excluded.state'),
+                  country: eb.ref('excluded.country'),
+                },
+                edit,
+              ),
+              lockedProperties: distinctUnion(eb, 'lockedProperties', nonDateTouched),
+              // A pending owner SidecarWrite job reads asset_exif's CURRENT value at run time, not a value
+              // snapshotted at queue time. If the editor overwrites a property the owner already queued a write
+              // for, that job would otherwise flush the editor's value to the XMP sidecar the moment it runs.
+              // Cancelling the pending flag for exactly the properties just touched closes that window - nothing
+              // valid is left to flush for the owner's now-superseded edit, and the editor's replacement value
+              // must never reach disk regardless of who queued what first.
+              sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', nonDateTouched),
+            })),
+          )
           .execute();
       }
 
@@ -511,16 +531,24 @@ export class AssetRepository {
           const dateTimeOriginal = DateTime.fromJSDate(base).setZone(timeZone);
           const localDateTime = dateTimeOriginal.setZone('UTC', { keepLocalTime: true });
 
+          // Upsert, same reason as the non-date branch above: this asset may not have an asset_exif row yet.
           await trx
-            .updateTable('asset_exif')
-            .set((eb) => ({
+            .insertInto('asset_exif')
+            .values({
+              assetId: row.assetId,
               dateTimeOriginal: dateTimeOriginal.toJSDate(),
               timeZone,
-              lockedProperties: distinctUnion(eb, 'lockedProperties', ['dateTimeOriginal', 'timeZone']),
-              // Same pending-owner-write cancellation as the non-date branch above.
-              sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', ['dateTimeOriginal', 'timeZone']),
-            }))
-            .where('assetId', '=', row.assetId)
+              lockedProperties: ['dateTimeOriginal', 'timeZone'],
+            })
+            .onConflict((oc) =>
+              oc.column('assetId').doUpdateSet((eb) => ({
+                dateTimeOriginal: eb.ref('excluded.dateTimeOriginal'),
+                timeZone: eb.ref('excluded.timeZone'),
+                lockedProperties: distinctUnion(eb, 'lockedProperties', ['dateTimeOriginal', 'timeZone']),
+                // Same pending-owner-write cancellation as the non-date branch above.
+                sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', ['dateTimeOriginal', 'timeZone']),
+              })),
+            )
             .execute();
 
           await trx

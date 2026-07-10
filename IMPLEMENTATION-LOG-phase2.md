@@ -204,3 +204,40 @@ database-only metadata-update primitive, metadata-extraction changes so locked d
 re-scan, and the Editor's allowlisted metadata endpoints. Recommend running the deferred migration generation and
 medium/e2e tests (both phases now have hand-written, DB-unverified migrations) before or alongside starting Phase
 3.
+
+## 10. Post-ship fix: `AlbumRepository#create()` broke ALL album creation, not just sharing
+
+Found from the user's own Phase 1 smoke-testing, when a plain `POST /api/albums` with just an album name (no
+assets) failed with a generic "Failed to create album" on their live deployment — i.e., not a sharing-specific
+issue, ordinary everyday album creation was broken by this phase for every user. Root-caused for the first time
+against a real Postgres instance spun up locally for this purpose (this environment had none available for the
+whole rest of Phase 1–3, so this class of bug was invisible to typecheck/lint/unit tests, all of which mock the
+repository layer). Two distinct bugs, both now fixed:
+
+1. **Positional column mismatch.** `create()`'s `album_asset` CTE is a bare `INSERT ... SELECT` with no explicit
+   target column list, so Postgres maps the `SELECT`'s three output columns onto the table's columns **by
+   physical position**, not by name. `sourceLibraryId` was added to `album_asset` by an `ALTER TABLE` (this
+   phase), so — regardless of where it's declared in the TypeScript table class — it physically lives *after*
+   `createdAt`/`updatedAt`/`updateId` in the real column order. The 3rd selected value was silently landing in
+   `createdAt`, producing `column "createdAt" is of type timestamp with time zone but expression is of type uuid`
+   on every single album creation, including ones with zero assets (the `album_user` insert alone still runs).
+   `copyAlbums()` had the identical bug for the same reason. Fixed by adding an explicit `.columns([...])` call to
+   both (mirroring the existing precedent at `tag.repository.ts`'s `tag_closure` insert) — the already-correct
+   `addAssetIds()`/`addLibraryAssetIds()` methods only ever write 2/use named `.values()`, so they were never
+   affected.
+2. **CTE name shadows the real table.** Once (1) was fixed, a second, unrelated bug surfaced: within `create()`'s
+   multi-CTE query, the `WITH "album_asset" AS (...)` CTE name shadows the *real* `album_asset` table for the
+   rest of that same query — including the outer `withAssets()`/`withAlbumAssetProvenance()` read, which filters
+   on `album_asset.sourceLibraryId`. Since the CTE's own `RETURNING` clause only listed `albumId, assetId`, that
+   later reference failed with `column album_asset.sourceLibraryId does not exist` — the CTE relation genuinely
+   didn't have that column once postgres resolved the name to it instead of the table. Fixed by adding
+   `sourceLibraryId` to the `RETURNING` list.
+
+**Verification:** rather than only re-running the (still DB-less) unit suite, spun up the exact production
+Postgres image (`ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0`) locally, ran every migration
+from Phase 1–3 against it end to end (all applied cleanly — the first real confirmation of this for any of the
+three hand-written migrations), and exercised `AlbumRepository.create()` directly: empty-assets, ordinary
+(null-provenance) assets, and a library-provenance asset that is correctly visible while its `library_user` share
+is active and correctly disappears the moment the share is revoked — the first live, executed (not just
+typechecked) proof that Phase 2's core revocation mechanism actually works. New regression coverage:
+`test/medium/specs/repositories/album.repository.create.spec.ts`.
