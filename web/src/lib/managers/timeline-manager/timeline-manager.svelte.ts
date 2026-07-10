@@ -248,7 +248,12 @@ export class TimelineManager extends VirtualScrollManager {
     const timebuckets = await getTimeBuckets({
       ...authManager.params,
       ...this.#options,
-    });
+      // `libraryId` isn't a known field on the generated `getTimeBuckets` request type yet - the
+      // SDK hasn't been regenerated for the shared-external-libraries feature (see
+      // web/src/lib/api/library-share.ts) even though the server's TimeBucketDto already accepts
+      // it (server/src/dtos/time-bucket.dto.ts). Intersect the type here rather than fight the
+      // stale generated type; delete this cast once a real SDK regen adds the field for real.
+    } as Parameters<typeof getTimeBuckets>[0] & { libraryId?: string });
 
     this.months = timebuckets.map((timeBucket) => {
       const date = new SvelteDate(timeBucket.timeBucket);

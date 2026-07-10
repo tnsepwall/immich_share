@@ -21,7 +21,9 @@ export async function loadFromTimeBuckets(
       ...authManager.params,
       ...options,
       timeBucket,
-    },
+      // `libraryId` isn't a known field on the generated `getTimeBucket` request type yet - see
+      // the identical comment in timeline-manager.svelte.ts's `#initializeTimelineMonths`.
+    } as Parameters<typeof getTimeBucket>[0] & { libraryId?: string },
     { signal },
   );
 

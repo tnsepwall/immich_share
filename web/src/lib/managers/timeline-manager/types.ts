@@ -9,6 +9,17 @@ export type TimelineManagerOptions = Omit<AssetApiGetTimeBucketsRequest, 'size'>
   timelineAlbumId?: string;
   deferInit?: boolean;
   assetFilter?: Set<string>;
+  /**
+   * Filter assets to a specific shared external library (see the `/shared-libraries/[libraryId]`
+   * route). TEMPORARY: not yet a known field on `AssetApiGetTimeBucketsRequest` because
+   * `packages/sdk` hasn't been regenerated for this feature (see web/src/lib/api/library-share.ts)
+   * - the server's TimeBucketDto already accepts it. Like `timelineAlbumId`/`deferInit`/
+   * `assetFilter` above, this rides along on the options object but is not itself a field the
+   * generated `getTimeBuckets`/`getTimeBucket` functions know about; the two call sites that build
+   * the actual network request (timeline-manager.svelte.ts, internal/load-support.svelte.ts)
+   * intersect the request type there so it's still sent to the server.
+   */
+  libraryId?: string;
 };
 
 export type AssetDescriptor = { id: string };

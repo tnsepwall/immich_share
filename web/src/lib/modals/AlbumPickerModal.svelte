@@ -6,6 +6,7 @@
     isSelectableRowType,
   } from '$lib/components/shared-components/album-selection/album-selection-utils';
   import { eventManager } from '$lib/managers/event-manager.svelte';
+  import { authManager } from '$lib/managers/auth-manager.svelte';
   import { albumViewSettings } from '$lib/stores/preferences.store';
   import { createAlbum, getAllAlbums, type AlbumResponseDto } from '@immich/sdk';
   import { Button, Icon, Modal, ModalBody, ModalFooter, Text } from '@immich/ui';
@@ -23,12 +24,24 @@
 
   type Props = {
     onClose: (albums?: AlbumResponseDto[]) => void;
+    /** See AssetAddToAlbumModal.svelte's prop of the same name. */
+    restrictToOwnedAlbums?: boolean;
   };
 
-  let { onClose }: Props = $props();
+  let { onClose, restrictToOwnedAlbums = false }: Props = $props();
 
   onMount(async () => {
-    albums = await getAllAlbums({});
+    const allAlbums = await getAllAlbums({});
+    albums =
+      restrictToOwnedAlbums && authManager.authenticated
+        ? allAlbums.filter(
+            // Owned (album.albumUsers[0] is always the owner) AND no existing shared link - a
+            // library-derived asset may only go into an album the recipient owns, and the server
+            // separately rejects the insertion when that album already has a shared link (see
+            // FEATURE-PLAN-shared-external-libraries.md §2 "Derived album/link access").
+            (album) => album.albumUsers[0]?.user.id === authManager.user.id && !album.hasSharedLink,
+          )
+        : allAlbums;
     recentAlbums = [...albums].sort((a, b) => (new Date(a.updatedAt) > new Date(b.updatedAt) ? -1 : 1)).slice(0, 3);
     loading = false;
   });

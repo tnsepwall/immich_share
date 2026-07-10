@@ -47,11 +47,13 @@
   import EditorPanel from './editor/EditorPanel.svelte';
   import CropArea from './editor/transform-tool/CropArea.svelte';
   import ImagePanoramaViewer from './ImagePanoramaViewer.svelte';
+  import LibraryManualFaceEditor from './library-editor/LibraryManualFaceEditor.svelte';
   import OcrButton from './OcrButton.svelte';
   import PhotoViewer from './PhotoViewer.svelte';
   import SlideshowBar from './SlideshowBar.svelte';
   import SlideshowMetadataOverlay from './SlideshowMetadataOverlay.svelte';
   import VideoViewer from './VideoWrapperViewer.svelte';
+  import type { LibraryShareContext } from '$lib/utils/library-share-context';
 
   export type AssetCursor = {
     current: AssetResponseDto;
@@ -66,6 +68,8 @@
     isShared?: boolean;
     album?: AlbumResponseDto;
     person?: PersonResponseDto;
+    /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
+    libraryShare?: LibraryShareContext;
     onAssetChange?: (asset: AssetResponseDto) => void;
     preAction?: PreAction;
     onAction?: OnAction;
@@ -82,6 +86,7 @@
     isShared = false,
     album,
     person,
+    libraryShare,
     onAssetChange,
     preAction,
     onAction,
@@ -103,6 +108,10 @@
 
   let previewStackedAsset: AssetResponseDto | undefined = $state();
   let stack: StackResponseDto | null = $state(null);
+  // Bumped after a manual face is created via LibraryManualFaceEditor below (which lives in this
+  // component's subtree, not DetailPanel's) so an open LibraryFaceEditSidePanel/LibraryFacePanel
+  // inside <DetailPanel> knows to reload its face list.
+  let libraryFacesRefreshToken = $state(0);
 
   const asset = $derived(previewStackedAsset ?? cursor.current);
   const nextAsset = $derived(cursor.nextAsset);
@@ -383,10 +392,17 @@
     if (!sharedLink) {
       if (previewStackedAsset) {
         await ocrManager.getAssetOcr(previewStackedAsset.id);
-        await faceManager.getAssetFaces(previewStackedAsset.id);
+        // Never the global, non-library-scoped faces endpoint in a library-share context - LibraryFacePanel
+        // already loads faces via getLibraryAssetFaces, which is the only person/face data an Editor/Viewer
+        // should ever see here.
+        if (!libraryShare) {
+          await faceManager.getAssetFaces(previewStackedAsset.id);
+        }
       }
       await ocrManager.getAssetOcr(asset.id);
-      await faceManager.getAssetFaces(asset.id);
+      if (!libraryShare) {
+        await faceManager.getAssetFaces(asset.id);
+      }
     }
   };
 
@@ -499,6 +515,7 @@
         {album}
         {person}
         {stack}
+        {libraryShare}
         preAction={handlePreAction}
         onAction={handleAction}
         {onUndoDelete}
@@ -578,6 +595,20 @@
       />
     {/if}
 
+    {#if assetViewerManager.isLibraryFaceEditMode && assetViewerManager.imgRef && libraryShare}
+      <LibraryManualFaceEditor
+        htmlElement={assetViewerManager.imgRef}
+        assetId={asset.id}
+        libraryId={libraryShare.libraryId}
+        onClose={(created) => {
+          assetViewerManager.closeLibraryFaceEditMode();
+          if (created) {
+            libraryFacesRefreshToken++;
+          }
+        }}
+      />
+    {/if}
+
     {#if showActivityStatus}
       <div class="absolute inset-e-0 bottom-0 me-8 mb-20">
         <ActivityStatus
@@ -618,7 +649,7 @@
       translate="yes"
     >
       {#if showDetailPanel}
-        <DetailPanel {asset} currentAlbum={album} />
+        <DetailPanel {asset} currentAlbum={album} {libraryShare} {libraryFacesRefreshToken} />
       {:else if assetViewerManager.isShowEditor}
         <EditorPanel {asset} onClose={closeEditor} />
       {/if}

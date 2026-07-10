@@ -286,6 +286,26 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return setUnion(isOwner, isEditor);
     }
 
+    // uses library ids; owner ∪ any shared role (Viewer included) - reading who's tagged in a photo is
+    // part of viewing the photo itself, same as LibraryRead above.
+    case Permission.LibraryPersonRead: {
+      const isOwner = await access.library.checkOwnerAccess(auth.user.id, ids);
+      const isShared = await access.library.checkSharedAccess(auth.user.id, setDifference(ids, isOwner));
+      return setUnion(isOwner, isShared);
+    }
+
+    // uses library ids; owner ∪ Editor only, same shape as LibraryAssetUpdate above - curating people/faces
+    // is a write action. The library-editor service separately scope-checks the person/face ids against
+    // the same route library id via access.person.checkLibraryPersonScope/checkLibraryFaceScope.
+    case Permission.LibraryPersonCreate:
+    case Permission.LibraryPersonUpdate:
+    case Permission.LibraryFaceCreate:
+    case Permission.LibraryFaceUpdate: {
+      const isOwner = await access.library.checkOwnerAccess(auth.user.id, ids);
+      const isEditor = await access.library.checkEditorAccess(auth.user.id, setDifference(ids, isOwner));
+      return setUnion(isOwner, isEditor);
+    }
+
     case Permission.NotificationRead:
     case Permission.NotificationUpdate:
     case Permission.NotificationDelete: {

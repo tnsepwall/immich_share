@@ -6,9 +6,17 @@
   type Props = {
     assetIds: string[];
     onClose: () => void;
+    /**
+     * Restrict the picker to albums owned by the current user. Used from the shared-library
+     * browse route: a recipient may only add a library-derived asset to an album they own (never
+     * one merely shared with them), since the server's `LibraryAssetAddToAlbum` grant requires
+     * album ownership - see FEATURE-PLAN-shared-external-libraries.md §2 "Derived album/link
+     * access". Defaults to false everywhere else, so existing callers are unaffected.
+     */
+    restrictToOwnedAlbums?: boolean;
   };
 
-  const { assetIds, onClose }: Props = $props();
+  const { assetIds, onClose, restrictToOwnedAlbums = false }: Props = $props();
 
   const handleClose = async (albums?: AlbumResponseDto[]) => {
     const albumIds = (albums ?? []).map(({ id }) => id);
@@ -24,4 +32,4 @@
   };
 </script>
 
-<AlbumPickerModal onClose={handleClose} />
+<AlbumPickerModal onClose={handleClose} {restrictToOwnedAlbums} />

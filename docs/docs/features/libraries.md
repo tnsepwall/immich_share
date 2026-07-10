@@ -1,7 +1,7 @@
 # External Libraries
 
 :::info
-Currently an external library can only belong to a single user which is selected when the library is initially created.
+Currently an external library can only belong to a single user which is selected when the library is initially created. The owner can, however, share the library with other users for viewing or limited editing - see [Sharing a Library](#sharing-a-library) below.
 :::
 
 External libraries track assets stored in the filesystem outside of Immich. When the external library is scanned, Immich will load videos and photos from disk and create the corresponding assets. These assets will then be shown in the main timeline, and they will look and behave like any other asset, including viewing on the map, adding to albums, etc. Later, if a file is modified outside of Immich, you need to scan the library for the changes to show up.
@@ -85,6 +85,59 @@ This job also cleans up any libraries stuck in deletion. It is possible to trigg
 ### Deleting a Library
 
 When deleting an external library, all assets inside are immediately deleted along with the library. Note that while a library can take a long time to fully delete in the background, it is immediately removed from the library list. If the deletion process is interrupted (for example, due to server restart), it will be cleaned up in the next nightly cron job. The cleanup process can also be manually initiated by clicking the "Scan All Libraries" button in the library list.
+
+## Sharing a Library
+
+A library owner can share one of their external libraries with other users on the same Immich server. Sharing is opt-in and fully controlled by the owner: nothing is shared until they explicitly add people, and the owner can change a person's access level or remove them at any time. Sharing a library does not transfer or change ownership - the library still belongs to whoever created it.
+
+Shared libraries show up for recipients in **Sharing**, alongside partners and shared albums, and open in their own dedicated browse view rather than being merged into the recipient's main timeline.
+
+To share a library, go to the library owner's **Sharing** page, click **Share** next to the library you want to share, and add the people you want to give access to. For each person you can choose one of two roles:
+
+### Viewer
+
+A Viewer can browse, open, and download the visible assets in the shared library, and add them to albums they own. They cannot change anything about the library or its assets.
+
+### Editor
+
+An Editor can do everything a Viewer can, plus help curate the shared assets. Specifically, an Editor may change, for assets in that library only:
+
+- Description
+- Date/time and time zone
+- GPS location
+- Rating
+- Face labels (see [Face labeling scope](#face-labeling-scope) below)
+
+Everything else remains owner-only. In particular, an Editor can **never**:
+
+- Delete an asset, or change its visibility, archive, or lock status
+- Access archived, locked, or trashed assets, or the original files/paths on the server's filesystem
+- Run library scans or change library settings (import paths, exclusion patterns, etc.)
+- Merge or delete people, delete faces, or change anything about a person other than their name (and only under the conditions below)
+- Group assets into stacks, link live-photo motion parts, or run any maintenance/ML job
+
+:::info
+Editor changes are stored in Immich's database only. They are never written back to the original file as an XMP sidecar, even if [XMP sidecar writing](/features/xmp-sidecars) is otherwise enabled for the library owner. This keeps an Editor's curation fully reversible by the owner and guarantees an Editor can never modify a file outside of Immich.
+:::
+
+### Face labeling scope
+
+Editors get a scaled-down version of the face-labeling tools available to the owner, limited to what's visible through the shared library:
+
+- An Editor only ever sees faces and people that appear on assets within the shared library - never the owner's full people list, and never a person's photo or details sourced from an asset outside the library.
+- An Editor can create a new person (owned by the library owner) from an unlabeled face, reassign a face to a different person, and draw a new face box on a shared asset.
+- Renaming a person is only allowed when **every one of that person's faces** belongs to an asset in this library. If the person also appears in the owner's other photos outside the shared library, an Editor cannot rename them - the rename request is rejected.
+- Editors cannot merge people, delete a person, or delete a face.
+
+### Adding shared assets to your own albums
+
+Both Viewers and Editors can add assets from a shared library to an album they own. This does not let you create a public shared link for those assets, and it does not work for an album that you don't own (for example, one that's merely shared with you) or one that already has a public shared link - add the assets to a different album, or ask the library owner to share the asset directly.
+
+### Role changes and removing access
+
+The owner can change a person's role between Viewer and Editor, or remove their access entirely, at any time from the **Share** dialog. A recipient can also leave a shared library themselves.
+
+Whichever way access ends, it is revoked immediately: the person can no longer browse the library, and any album entries added from that library stop granting them access to the underlying assets. If the person is later re-added, they start again from whatever role they're given - none of their previous edits are undone, since those edits were made directly to the shared assets.
 
 ## Usage
 

@@ -23,6 +23,7 @@
   import { mediaQueryManager } from '$lib/stores/media-query-manager.svelte';
   import { isAssetViewerRoute, navigate } from '$lib/utils/navigation';
   import { getTimes, type ScrubberListener } from '$lib/utils/timeline-util';
+  import type { LibraryShareContext } from '$lib/utils/library-share-context';
   import { type AlbumResponseDto, type PersonResponseDto, type UserResponseDto } from '@immich/sdk';
   import { DateTime } from 'luxon';
   import { onDestroy, onMount, tick, type Snippet } from 'svelte';
@@ -45,6 +46,8 @@
     album?: AlbumResponseDto;
     albumUsers?: UserResponseDto[];
     person?: PersonResponseDto;
+    /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
+    libraryShare?: LibraryShareContext;
     onSelect?: (asset: TimelineAsset) => void;
     onEscape?: () => void;
     children?: Snippet;
@@ -77,6 +80,7 @@
     album,
     albumUsers = [],
     person,
+    libraryShare,
     onSelect = () => {},
     onEscape = () => {},
     children,
@@ -711,7 +715,16 @@
 
 <Portal target="body">
   {#if assetViewerManager.isViewing}
-    <TimelineAssetViewer bind:invisible {timelineManager} {removeAction} {withStacked} {isShared} {album} {person} />
+    <TimelineAssetViewer
+      bind:invisible
+      {timelineManager}
+      {removeAction}
+      {withStacked}
+      {isShared}
+      {album}
+      {person}
+      {libraryShare}
+    />
   {/if}
 </Portal>
 

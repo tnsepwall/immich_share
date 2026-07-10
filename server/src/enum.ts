@@ -193,6 +193,12 @@ export enum Permission {
   LibraryAssetAddToAlbum = 'libraryAsset.addToAlbum',
   LibraryAssetUpdate = 'libraryAsset.update',
 
+  LibraryPersonRead = 'libraryPerson.read',
+  LibraryPersonCreate = 'libraryPerson.create',
+  LibraryPersonUpdate = 'libraryPerson.update',
+  LibraryFaceCreate = 'libraryFace.create',
+  LibraryFaceUpdate = 'libraryFace.update',
+
   TimelineRead = 'timeline.read',
   TimelineDownload = 'timeline.download',
 

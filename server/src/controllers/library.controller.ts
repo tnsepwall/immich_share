@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
 import { AssetResponseDto } from 'src/dtos/asset-response.dto';
@@ -9,6 +9,18 @@ import {
   LibraryAssetUpdateDto,
   LibraryAssetUpdateParams,
 } from 'src/dtos/library-editor.dto';
+import {
+  LibraryFaceAssignDto,
+  LibraryFaceResponseDto,
+  LibraryManualFaceDto,
+  LibraryPeopleResponseDto,
+  LibraryPeopleSearchDto,
+  LibraryPersonCreateDto,
+  LibraryPersonIdParams,
+  LibraryPersonParams,
+  LibraryPersonResponseDto,
+  LibraryPersonUpdateDto,
+} from 'src/dtos/library-person.dto';
 import {
   CreateLibraryDto,
   LibraryResponseDto,
@@ -238,5 +250,100 @@ export class LibraryController {
     @Body() dto: LibraryAssetBulkUpdateDto,
   ): Promise<AssetResponseDto[]> {
     return this.editorService.updateAssets(auth, libraryId, dto);
+  }
+
+  @Get(':libraryId/people')
+  @Authenticated({ permission: Permission.LibraryPersonRead })
+  @Endpoint({
+    summary: 'Retrieve library people',
+    description:
+      'Retrieve the people reachable through this library. Requires the library owner or the Editor/Viewer role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  getLibraryPeople(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId }: LibraryPersonParams,
+    @Query() dto: LibraryPeopleSearchDto,
+  ): Promise<LibraryPeopleResponseDto> {
+    return this.editorService.getPeople(auth, libraryId, dto);
+  }
+
+  @Post(':libraryId/people')
+  @Authenticated({ permission: Permission.LibraryPersonCreate })
+  @Endpoint({
+    summary: 'Create a library person',
+    description:
+      'Create a new person owned by the library owner from a set of faces within this library, and assign the faces to it. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  createLibraryPerson(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId }: LibraryPersonParams,
+    @Body() dto: LibraryPersonCreateDto,
+  ): Promise<LibraryPersonResponseDto> {
+    return this.editorService.createPerson(auth, libraryId, dto);
+  }
+
+  @Put(':libraryId/people/:personId')
+  @Authenticated({ permission: Permission.LibraryPersonUpdate })
+  @Endpoint({
+    summary: 'Rename a library person',
+    description:
+      'Rename a person reachable through this library. Only allowed when every one of the faces of this person is within this library. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  updateLibraryPerson(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId, personId }: LibraryPersonIdParams,
+    @Body() dto: LibraryPersonUpdateDto,
+  ): Promise<LibraryPersonResponseDto> {
+    return this.editorService.updatePersonName(auth, libraryId, personId, dto);
+  }
+
+  @Get(':libraryId/assets/:assetId/faces')
+  @Authenticated({ permission: Permission.LibraryPersonRead })
+  @Endpoint({
+    summary: 'Retrieve library asset faces',
+    description:
+      'Retrieve the faces detected on an asset in this library. Requires the library owner or the Editor/Viewer role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  getLibraryAssetFaces(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId, assetId }: LibraryAssetUpdateParams,
+  ): Promise<LibraryFaceResponseDto[]> {
+    return this.editorService.getAssetFaces(auth, libraryId, assetId);
+  }
+
+  @Post(':libraryId/faces')
+  @Authenticated({ permission: Permission.LibraryFaceCreate })
+  @Endpoint({
+    summary: 'Create a manual library face',
+    description:
+      'Draw a new face bounding box on an asset in this library and assign it to a person reachable through this library. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  createLibraryFace(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId }: LibraryPersonParams,
+    @Body() dto: LibraryManualFaceDto,
+  ): Promise<LibraryFaceResponseDto> {
+    return this.editorService.createManualFace(auth, libraryId, dto);
+  }
+
+  @Put(':libraryId/faces')
+  @Authenticated({ permission: Permission.LibraryFaceUpdate })
+  @Endpoint({
+    summary: 'Assign library faces',
+    description:
+      'Reassign a set of faces within this library to a person reachable through this library. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  assignLibraryFaces(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId }: LibraryPersonParams,
+    @Body() dto: LibraryFaceAssignDto,
+  ): Promise<LibraryFaceResponseDto[]> {
+    return this.editorService.assignFaces(auth, libraryId, dto);
   }
 }

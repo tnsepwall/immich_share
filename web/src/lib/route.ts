@@ -92,6 +92,10 @@ export const Route = {
   // partners
   viewPartner: ({ id }: { id: string }) => `/partners/${id}`,
 
+  // shared libraries
+  // TEMPORARY: pairs with the hand-written client at web/src/lib/api/library-share.ts until the SDK is regenerated.
+  viewSharedLibrary: ({ id }: { id: string }) => `/shared-libraries/${id}`,
+
   // people
   people: () => '/people',
   viewPerson: ({ id }: { id: string }, params?: { previousRoute?: string; action?: 'merge' }) =>
