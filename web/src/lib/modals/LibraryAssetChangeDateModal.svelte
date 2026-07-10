@@ -7,11 +7,10 @@
   // offset - see server/src/services/library-editor.service.ts's date-edit modes).
   import Combobox from '$lib/components/shared-components/Combobox.svelte';
   import DateInput from '$lib/elements/DateInput.svelte';
-  import { updateLibraryAsset } from '$lib/api/library-share';
   import { eventManager } from '$lib/managers/event-manager.svelte';
   import { getPreferredTimeZone, getTimezones, toIsoDate } from '$lib/modals/timezone-utils';
   import { handleError } from '$lib/utils/handle-error';
-  import type { AssetResponseDto } from '@immich/sdk';
+  import { updateLibraryAsset, type AssetResponseDto } from '@immich/sdk';
   import { FormModal, Label } from '@immich/ui';
   import { mdiCalendarEdit } from '@mdi/js';
   import { DateTime } from 'luxon';

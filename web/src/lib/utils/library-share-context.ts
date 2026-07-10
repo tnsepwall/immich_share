@@ -1,8 +1,4 @@
-// TEMPORARY: this file is UI-only (no server DTOs live here), but it depends on the temporary
-// `LibraryUserRole` type from web/src/lib/api/library-share.ts, which exists only because
-// `packages/sdk` has not been regenerated for the shared-external-libraries feature yet. See that
-// file's header comment for the full explanation.
-import { LibraryUserRole } from '$lib/api/library-share';
+import { LibraryUserRole } from '@immich/sdk';
 
 /**
  * The role a user has when viewing a library through the shared-library browse route

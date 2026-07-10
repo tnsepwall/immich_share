@@ -4,8 +4,6 @@
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import EmptyPlaceholder from '$lib/components/shared-components/EmptyPlaceholder.svelte';
   import UserAvatar from '$lib/components/shared-components/UserAvatar.svelte';
-  // TEMPORARY: shared-library endpoints aren't in the generated SDK yet - see $lib/api/library-share.
-  import type { LibraryResponseDto, SharedLibraryResponseDto } from '$lib/api/library-share';
   import LibraryShareModal from '$lib/modals/LibraryShareModal.svelte';
   import { Route } from '$lib/route';
   import { getAlbumsActions } from '$lib/services/album.service';
@@ -18,6 +16,7 @@
     SortOrder,
     type AlbumViewSettings,
   } from '$lib/stores/preferences.store';
+  import type { LibraryResponseDto, SharedLibraryResponseDto } from '@immich/sdk';
   import { Button, IconButton, modalManager } from '@immich/ui';
   import { mdiInformationOutline, mdiShareVariantOutline } from '@mdi/js';
   import { invalidateAll } from '$app/navigation';

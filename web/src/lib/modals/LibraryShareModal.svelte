@@ -1,24 +1,20 @@
 <script lang="ts">
-  /**
-   * TEMPORARY: calls the hand-written shared-library API client at `$lib/api/library-share`
-   * instead of `@immich/sdk` - see that file for why. Switch these imports once the SDK is
-   * regenerated for the shared-external-libraries endpoints.
-   */
   import { initInput } from '$lib/actions/focus';
   import UserAvatar from '$lib/components/shared-components/UserAvatar.svelte';
+  import { authManager } from '$lib/managers/auth-manager.svelte';
+  import { handleError } from '$lib/utils/handle-error';
+  import { normalizeSearchString } from '$lib/utils/string-utils';
   import {
     addLibraryUsers,
     LibraryUserRole,
     removeLibraryUser,
-    updateLibraryUserRole,
+    searchUsers,
+    updateLibraryUser,
     type LibraryResponseDto,
     type LibraryUserResponseDto,
     type SharedLibraryResponseDto,
-  } from '$lib/api/library-share';
-  import { authManager } from '$lib/managers/auth-manager.svelte';
-  import { handleError } from '$lib/utils/handle-error';
-  import { normalizeSearchString } from '$lib/utils/string-utils';
-  import { searchUsers, type UserResponseDto } from '@immich/sdk';
+    type UserResponseDto,
+  } from '@immich/sdk';
   import {
     Button,
     Field,
@@ -139,7 +135,7 @@
     }
 
     try {
-      const updated = await updateLibraryUserRole({ id: library.id, userId: user.id, libraryUserUpdateDto: { role } });
+      const updated = await updateLibraryUser({ id: library.id, userId: user.id, libraryUserUpdateDto: { role } });
       sharedUsers = sharedUsers.map((sharedUser) => (sharedUser.user.id === user.id ? updated : sharedUser));
     } catch (error) {
       handleError(error, $t('errors.unable_to_change_library_user_role'));
