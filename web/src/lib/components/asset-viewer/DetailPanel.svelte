@@ -33,16 +33,29 @@
   import UserAvatar from '../shared-components/UserAvatar.svelte';
   import AlbumListItemDetails from './AlbumListItemDetails.svelte';
   import DetailPanelPeople from '$lib/components/asset-viewer/DetailPanelPeople.svelte';
+  import LibraryAssetEditorPanel from '$lib/components/asset-viewer/library-editor/LibraryAssetEditorPanel.svelte';
+  import LibraryFacePanel from '$lib/components/asset-viewer/library-editor/LibraryFacePanel.svelte';
+  import LibraryFaceEditSidePanel from '$lib/components/asset-viewer/library-editor/LibraryFaceEditSidePanel.svelte';
   import { faceManager } from '$lib/stores/face.svelte';
+  import type { LibraryShareContext } from '$lib/utils/library-share-context';
+  import { isLibraryShareEditor } from '$lib/utils/library-share-context';
 
   interface Props {
     asset: AssetResponseDto;
     currentAlbum?: AlbumResponseDto | null;
+    /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
+    libraryShare?: LibraryShareContext;
+    /** Bumped by AssetViewer.svelte after a manual face is created via the overlay it renders
+     * (LibraryManualFaceEditor.svelte lives outside this component's subtree), so the open
+     * LibraryFaceEditSidePanel/LibraryFacePanel below know to reload their face list. */
+    libraryFacesRefreshToken?: number;
   }
 
-  let { asset, currentAlbum = null }: Props = $props();
+  let { asset, currentAlbum = null, libraryShare, libraryFacesRefreshToken = 0 }: Props = $props();
 
   let isOwner = $derived(authManager.authenticated && authManager.user.id === asset.ownerId);
+  const isLibraryEditor = $derived(isLibraryShareEditor(libraryShare));
+  let showLibraryFaceEditor = $state(false);
   let latlng = $derived(
     (() => {
       const lat = asset.exifInfo?.latitude;
@@ -82,6 +95,8 @@
     }
 
     assetViewerManager.closeEditFacesPanel();
+    assetViewerManager.closeLibraryFaceEditMode();
+    showLibraryFaceEditor = false;
     previousId = asset.id;
   });
 
@@ -109,12 +124,13 @@
 
   onDestroy(() => {
     assetViewerManager.closeEditFacesPanel();
+    assetViewerManager.closeLibraryFaceEditMode();
   });
 </script>
 
 <OnEvents onAlbumAddAssets={() => (albums = refreshAlbums())} />
 
-{#if !assetViewerManager.isEditFacesPanelOpen}
+{#if !assetViewerManager.isEditFacesPanelOpen && !showLibraryFaceEditor}
   <section class="relative p-2">
     <div class="flex place-items-center gap-2">
       <IconButton
@@ -150,9 +166,21 @@
       </section>
     {/if}
 
-    <DetailPanelDescription {asset} {isOwner} />
-    <DetailPanelRating {asset} {isOwner} />
+    {#if isLibraryEditor}
+      <LibraryAssetEditorPanel {asset} libraryId={libraryShare!.libraryId} />
+    {:else}
+      <DetailPanelDescription {asset} {isOwner} />
+      <DetailPanelRating {asset} {isOwner} />
+    {/if}
     <DetailPanelPeople {asset} {isOwner} {previousRoute} />
+    {#if isLibraryEditor}
+      <LibraryFacePanel
+        {asset}
+        libraryId={libraryShare!.libraryId}
+        refreshToken={libraryFacesRefreshToken}
+        onOpenEditor={() => (showLibraryFaceEditor = true)}
+      />
+    {/if}
 
     <div class="p-4">
       {#if asset.exifInfo}
@@ -163,7 +191,9 @@
         <Text size="small" color="muted">{$t('no_exif_info_available')}</Text>
       {/if}
 
-      <DetailPanelDate {asset} />
+      {#if !isLibraryEditor}
+        <DetailPanelDate {asset} />
+      {/if}
 
       <div class="flex gap-4 py-4">
         <div><Icon icon={mdiImageOutline} size="24" /></div>
@@ -274,7 +304,9 @@
         </div>
       {/if}
 
-      <DetailPanelLocation {isOwner} {asset} />
+      {#if !isLibraryEditor}
+        <DetailPanelLocation {isOwner} {asset} />
+      {/if}
     </div>
   </section>
 
@@ -388,5 +420,15 @@
     assetType={asset.type}
     onClose={() => assetViewerManager.closeEditFacesPanel()}
     onRefresh={handleRefreshPeople}
+  />
+{/if}
+
+{#if showLibraryFaceEditor && libraryShare}
+  <LibraryFaceEditSidePanel
+    assetId={asset.id}
+    libraryId={libraryShare.libraryId}
+    refreshToken={libraryFacesRefreshToken}
+    onClose={() => (showLibraryFaceEditor = false)}
+    onDrawFace={() => assetViewerManager.toggleLibraryFaceEditMode()}
   />
 {/if}

@@ -56,6 +56,7 @@ class AssetViewerManager extends BaseEventManager<Events> {
   isShowEditor = $state(false);
   #isFaceEditMode = $state(false);
   #isEditFacesPanelOpen = $state(false);
+  #isLibraryFaceEditMode = $state(false);
   #viewingAssetStoreState = $state<AssetResponseDto>();
   #viewState = $state<boolean>(false);
   #highlightedFaces = $state<Faces[]>([]);
@@ -88,6 +89,17 @@ class AssetViewerManager extends BaseEventManager<Events> {
 
   get isEditFacesPanelOpen() {
     return this.#isEditFacesPanelOpen;
+  }
+
+  /**
+   * A separate flag from `isFaceEditMode`, deliberately never touched by the owner's face-tagging
+   * UI (DetailPanelPeople.svelte / FaceEditor.svelte only ever read/write `isFaceEditMode`). Used
+   * by the shared-library Editor's manual-face-box overlay (LibraryManualFaceEditor.svelte) so an
+   * Editor drawing a face box on a shared-library asset can never accidentally trigger - or be
+   * shown - the owner's account-wide FaceEditor/people picker.
+   */
+  get isLibraryFaceEditMode() {
+    return this.#isLibraryFaceEditMode;
   }
 
   get zoomState() {
@@ -216,10 +228,19 @@ class AssetViewerManager extends BaseEventManager<Events> {
     this.#isEditFacesPanelOpen = false;
   }
 
+  toggleLibraryFaceEditMode() {
+    this.#isLibraryFaceEditMode = !this.#isLibraryFaceEditMode;
+  }
+
+  closeLibraryFaceEditMode() {
+    this.#isLibraryFaceEditMode = false;
+  }
+
   resetPanelState() {
     this.closeEditor();
     this.closeFaceEditMode();
     this.closeEditFacesPanel();
+    this.closeLibraryFaceEditMode();
   }
 
   get highlightedFaces() {

@@ -18,11 +18,14 @@
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { languageManager } from '$lib/managers/language-manager.svelte';
+  import AssetAddToAlbumModal from '$lib/modals/AssetAddToAlbumModal.svelte';
   import { getAlbumAssetActions } from '$lib/services/album.service';
   import { getGlobalActions } from '$lib/services/app.service';
   import { getAssetActions } from '$lib/services/asset.service';
   import { getSharedLink, withoutIcons } from '$lib/utils';
   import type { OnUndoDelete } from '$lib/utils/actions';
+  import type { LibraryShareContext } from '$lib/utils/library-share-context';
+  import { isLibraryShareOwnerPreview } from '$lib/utils/library-share-context';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
   import {
     AssetTypeEnum,
@@ -32,7 +35,7 @@
     type PersonResponseDto,
     type StackResponseDto,
   } from '@immich/sdk';
-  import { ActionButton, CommandPaletteDefaultProvider, Tooltip, type ActionItem } from '@immich/ui';
+  import { ActionButton, CommandPaletteDefaultProvider, modalManager, Tooltip, type ActionItem } from '@immich/ui';
   import { mdiArrowLeft, mdiArrowRight, mdiDotsVertical, mdiVideoOutline } from '@mdi/js';
   import { t } from 'svelte-i18n';
 
@@ -41,6 +44,8 @@
     album?: AlbumResponseDto | null;
     person?: PersonResponseDto | null;
     stack?: StackResponseDto | null;
+    /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
+    libraryShare?: LibraryShareContext;
     preAction: PreAction;
     onAction: OnAction;
     onUndoDelete?: OnUndoDelete;
@@ -55,6 +60,7 @@
     album = null,
     person = null,
     stack = null,
+    libraryShare,
     preAction,
     onAction,
     onUndoDelete = undefined,
@@ -87,9 +93,35 @@
 
   const Actions = $derived(getAssetActions($t, { ...asset, stackPrimaryAssetId: stack?.primaryAssetId }));
   const sharedLink = getSharedLink();
+
+  // A shared-library Viewer/Editor never holds `AssetShare` (see design decision 3 in
+  // FEATURE-PLAN-shared-external-libraries.md) - creating a shared link from this route always
+  // fails server-side for a recipient, so it isn't offered at all. An owner previewing their own
+  // library through this same route keeps the normal Share action.
+  const isLibraryRecipient = $derived(!!libraryShare && !isLibraryShareOwnerPreview(libraryShare));
+
+  // A recipient may only add a library-derived asset to an album they own (and the server
+  // additionally rejects the insertion into an album that already has a shared link) - see §2
+  // "Derived album/link access". Filter the picker up front rather than only surfacing the error.
+  const AddToAlbum: ActionItem = $derived(
+    isLibraryRecipient
+      ? {
+          ...Actions.AddToAlbum,
+          onAction: () =>
+            modalManager.show(AssetAddToAlbumModal, { assetIds: [asset.id], restrictToOwnedAlbums: true }),
+        }
+      : Actions.AddToAlbum,
+  );
+
+  // Command-palette actions mirror what's actually rendered below: swap in the restricted
+  // AddToAlbum and drop Share entirely for a shared-library recipient, so a keyboard/palette
+  // invocation can't reach a dead action that the server would reject anyway.
+  const paletteActions = $derived(
+    Object.values({ ...Actions, AddToAlbum }).filter((action) => !isLibraryRecipient || action !== Actions.Share),
+  );
 </script>
 
-<CommandPaletteDefaultProvider name={$t('assets')} actions={withoutIcons([Close, Cast, ...Object.values(Actions)])} />
+<CommandPaletteDefaultProvider name={$t('assets')} actions={withoutIcons([Close, Cast, ...paletteActions])} />
 
 <div
   class="flex h-16 place-items-center justify-between bg-linear-to-b from-black/40 px-3 drop-shadow-[0_0_1px_rgba(0,0,0,0.4)] transition-transform duration-200"
@@ -112,7 +144,9 @@
       </Tooltip>
     {/if}
     <ActionButton action={Cast} />
-    <ActionButton action={Actions.Share} />
+    {#if !isLibraryRecipient}
+      <ActionButton action={Actions.Share} />
+    {/if}
     <ActionButton action={Actions.Offline} />
     <ActionButton action={Actions.ZoomIn} />
     <ActionButton action={Actions.ZoomOut} />
@@ -145,7 +179,7 @@
           <RestoreAction {asset} {onAction} />
         {/if}
 
-        <ActionMenuItem action={Actions.AddToAlbum} />
+        <ActionMenuItem action={AddToAlbum} />
         {#if album && (isOwner || isAlbumOwner)}
           <RemoveFromAlbumAction {album} onRemove={onRemoveFromAlbum} assetIds={[asset.id]} menuItem />
         {/if}

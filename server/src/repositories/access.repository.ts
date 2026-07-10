@@ -603,6 +603,87 @@ class PersonAccess {
       .execute()
       .then((faces) => new Set(faces.map((face) => face.id)));
   }
+
+  // Library-scoped checks for the shared-library Editor's face-labeling allowlist (Phase 4). Unlike
+  // checkFaceOwnerAccess/checkOwnerAccess above, these don't check who OWNS the face/person - the editor never
+  // owns any of it - they check whether the face/person is genuinely IN SCOPE for the given library, which the
+  // dedicated library-editor endpoints then combine with a separate owner-or-Editor role check on the library id.
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkLibraryFaceScope(libraryId: string, faceIds: Set<string>) {
+    if (faceIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('asset_face')
+      .select('asset_face.id')
+      .innerJoin('asset', (join) =>
+        join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
+      )
+      .where('asset_face.id', 'in', [...faceIds])
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', '=', true)
+      .where('asset.libraryId', '=', libraryId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .execute()
+      .then((faces) => new Set(faces.map((face) => face.id)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkLibraryPersonScope(libraryId: string, personIds: Set<string>) {
+    if (personIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('person')
+      .select('person.id')
+      .where('person.id', 'in', [...personIds])
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('asset_face')
+            .innerJoin('asset', (join) =>
+              join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
+            )
+            .whereRef('asset_face.personId', '=', 'person.id')
+            .where('asset_face.deletedAt', 'is', null)
+            .where('asset_face.isVisible', '=', true)
+            .where('asset.libraryId', '=', libraryId)
+            .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+        ),
+      )
+      .execute()
+      .then((persons) => new Set(persons.map((person) => person.id)));
+  }
+
+  // Required before an Editor renames a person: true only when the person has at least one (non-deleted-asset)
+  // face inside this exact library and zero non-deleted-asset faces anywhere else - renaming a person who is
+  // also represented outside this library would change identity data the editor has no access to. A trashed
+  // (soft-deleted) OUTSIDE asset still counts as "elsewhere" - it's restorable, so a face on one is a real,
+  // if dormant, footprint that must still block the rename. The join carries no asset.deletedAt filter on
+  // either side; only genuinely deleted (hard-removed) rows drop out, via the asset_face WHERE clause below.
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async checkPersonExclusiveToLibrary(libraryId: string, personId: string): Promise<boolean> {
+    const result = await this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      .select((eb) => [
+        eb.fn.countAll<number>().filterWhere('asset.libraryId', '=', libraryId).as('insideCount'),
+        eb.fn
+          .countAll<number>()
+          .filterWhere((eb) => eb.or([eb('asset.libraryId', 'is', null), eb('asset.libraryId', '!=', libraryId)]))
+          .as('outsideCount'),
+      ])
+      .where('asset_face.personId', '=', personId)
+      .where('asset_face.deletedAt', 'is', null)
+      .executeTakeFirst();
+
+    return !!result && Number(result.insideCount) > 0 && Number(result.outsideCount) === 0;
+  }
 }
 
 class PartnerAccess {

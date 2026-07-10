@@ -14,6 +14,7 @@
   import { handleErrorAsync } from '$lib/utils/handle-error';
   import { navigate } from '$lib/utils/navigation';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
+  import type { LibraryShareContext } from '$lib/utils/library-share-context';
   import { type AlbumResponseDto, type AssetResponseDto, type PersonResponseDto, getAssetInfo } from '@immich/sdk';
   import { onDestroy, onMount } from 'svelte';
   import { t } from 'svelte-i18n';
@@ -25,6 +26,8 @@
     isShared?: boolean;
     album?: AlbumResponseDto;
     person?: PersonResponseDto;
+    /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
+    libraryShare?: LibraryShareContext;
     removeAction?: AssetAction.UNARCHIVE | AssetAction.ARCHIVE | AssetAction.SET_VISIBILITY_TIMELINE | null;
   }
 
@@ -37,6 +40,7 @@
     isShared = false,
     album,
     person,
+    libraryShare,
   }: Props = $props();
 
   const getAsset = (id: string) => {
@@ -241,6 +245,7 @@
     {isShared}
     {album}
     {person}
+    {libraryShare}
     onAssetChange={(asset) => {
       timelineManager?.upsertAssets([toTimelineAsset(asset)]);
     }}

@@ -1,6 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
+import { JobName } from 'src/enum';
 import { LibraryEditorService } from 'src/services/library-editor.service';
 import { AssetFactory } from 'test/factories/asset.factory';
+import { AssetFaceFactory } from 'test/factories/asset-face.factory';
 import { authStub } from 'test/fixtures/auth.stub';
 import { getForAsset } from 'test/mappers';
 import { factory } from 'test/small.factory';
@@ -249,6 +251,327 @@ describe(LibraryEditorService.name, () => {
         expect.objectContaining({ description: 'solo edit' }),
       );
       expect(result).toEqual(expect.objectContaining({ id: asset.id }));
+    });
+  });
+
+  describe('getPeople', () => {
+    it('should reject a caller with no relationship to the library', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkSharedAccess.mockResolvedValue(new Set());
+
+      await expect(sut.getPeople(authStub.user1, 'library-id', { page: 1, size: 500 })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.person.getAllForLibrary).not.toHaveBeenCalled();
+    });
+
+    it('should allow a Viewer (read-only share), paginate, and map the repository rows', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkSharedAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.getAllForLibrary.mockResolvedValue({
+        items: [{ id: 'person-1', name: 'Alice', thumbnailFace: null }],
+        hasNextPage: true,
+      });
+
+      const result = await sut.getPeople(authStub.user1, 'library-id', { page: 2, size: 10 });
+
+      expect(mocks.person.getAllForLibrary).toHaveBeenCalledWith('library-id', { take: 10, skip: 10 });
+      expect(result).toEqual({
+        people: [{ id: 'person-1', name: 'Alice', thumbnailFace: null }],
+        hasNextPage: true,
+      });
+    });
+  });
+
+  describe('getAssetFaces', () => {
+    it('should reject a caller with no relationship to the library', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkSharedAccess.mockResolvedValue(new Set());
+
+      await expect(sut.getAssetFaces(authStub.user1, 'library-id', 'asset-1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.person.getFacesForLibraryAsset).not.toHaveBeenCalled();
+    });
+
+    it('should allow a Viewer and map the faces', async () => {
+      const face = AssetFaceFactory.create({ id: 'face-1', assetId: 'asset-1' });
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkSharedAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.getFacesForLibraryAsset.mockResolvedValue([face]);
+
+      const result = await sut.getAssetFaces(authStub.user1, 'library-id', 'asset-1');
+
+      expect(result).toEqual([expect.objectContaining({ id: 'face-1', assetId: 'asset-1' })]);
+    });
+  });
+
+  describe('createPerson', () => {
+    it('should reject a caller without create access', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkEditorAccess.mockResolvedValue(new Set());
+
+      await expect(
+        sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.person.createPersonForLibrary).not.toHaveBeenCalled();
+    });
+
+    // The repository primitive re-verifies role, and library/face scope, INSIDE its own transaction -
+    // this covers the library not existing, access having been revoked since the outer check, or one or
+    // more faces turning out to be out of scope. All three collapse to the same null return and the same
+    // generic 400 here, so one test stands in for all of them at the service layer; the primitive's own
+    // medium spec (person.repository.spec.ts) exercises each condition individually.
+    it('should throw when the repository primitive rejects the request', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.createPersonForLibrary.mockResolvedValue(null);
+
+      await expect(
+        sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
+    it('should create the person, queue a feature-photo refresh job, and return the mapped result', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.createPersonForLibrary.mockResolvedValue({
+        personId: 'new-person',
+        needsFeaturePhoto: ['new-person'],
+      });
+      mocks.person.getOneForLibrary.mockResolvedValue({ id: 'new-person', name: 'Alice', thumbnailFace: null });
+
+      const result = await sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] });
+
+      expect(mocks.person.createPersonForLibrary).toHaveBeenCalledWith(
+        'library-id',
+        authStub.user1.user.id,
+        'Alice',
+        ['face-1'],
+      );
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.PersonGenerateThumbnail, data: { id: 'new-person' } },
+      ]);
+      expect(result).toEqual({ id: 'new-person', name: 'Alice', thumbnailFace: null });
+    });
+
+    it('should not queue any job when no feature photo needs refreshing', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.createPersonForLibrary.mockResolvedValue({ personId: 'new-person', needsFeaturePhoto: [] });
+      mocks.person.getOneForLibrary.mockResolvedValue({ id: 'new-person', name: 'Alice', thumbnailFace: null });
+
+      await sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] });
+
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updatePersonName', () => {
+    it('should reject a caller without update access', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkEditorAccess.mockResolvedValue(new Set());
+
+      await expect(
+        sut.updatePersonName(authStub.user1, 'library-id', 'person-1', { name: 'Bob' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.person.updatePersonNameForLibrary).not.toHaveBeenCalled();
+    });
+
+    // Covers not-in-scope and not-exclusive alike - both collapse to a false return from the primitive.
+    // See its own medium spec for each condition tested individually against a real database.
+    it('should throw when the repository primitive rejects the request', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.updatePersonNameForLibrary.mockResolvedValue(false);
+
+      await expect(
+        sut.updatePersonName(authStub.user1, 'library-id', 'person-1', { name: 'Bob' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('should rename and return the mapped result', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.updatePersonNameForLibrary.mockResolvedValue(true);
+      mocks.person.getOneForLibrary.mockResolvedValue({ id: 'person-1', name: 'Bob', thumbnailFace: null });
+
+      const result = await sut.updatePersonName(authStub.user1, 'library-id', 'person-1', { name: 'Bob' });
+
+      expect(mocks.person.updatePersonNameForLibrary).toHaveBeenCalledWith(
+        'library-id',
+        authStub.user1.user.id,
+        'person-1',
+        'Bob',
+      );
+      expect(result).toEqual({ id: 'person-1', name: 'Bob', thumbnailFace: null });
+    });
+  });
+
+  describe('assignFaces', () => {
+    it('should reject a caller without update access', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkEditorAccess.mockResolvedValue(new Set());
+
+      await expect(
+        sut.assignFaces(authStub.user1, 'library-id', { personId: 'person-1', faceIds: ['face-1'] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.person.assignFacesForLibrary).not.toHaveBeenCalled();
+    });
+
+    it('should throw when the repository primitive rejects the request', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.assignFacesForLibrary.mockResolvedValue(null);
+
+      await expect(
+        sut.assignFaces(authStub.user1, 'library-id', { personId: 'person-1', faceIds: ['face-1'] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
+    it('should reassign, queue a feature-photo refresh for the person who lost theirs, and return the mapped faces', async () => {
+      const target = { id: 'target-person', name: 'Target' };
+      const face = { ...AssetFaceFactory.create({ id: 'face-1' }), person: target };
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.person.assignFacesForLibrary.mockResolvedValue({ needsFeaturePhoto: ['old-person'] });
+      mocks.person.getFaceById.mockResolvedValue(face as any);
+
+      const result = await sut.assignFaces(authStub.user1, 'library-id', {
+        personId: 'target-person',
+        faceIds: ['face-1'],
+      });
+
+      expect(mocks.person.assignFacesForLibrary).toHaveBeenCalledWith(
+        'library-id',
+        authStub.user1.user.id,
+        'target-person',
+        ['face-1'],
+      );
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.PersonGenerateThumbnail, data: { id: 'old-person' } },
+      ]);
+      expect(result).toEqual([expect.objectContaining({ id: 'face-1', person: target })]);
+    });
+  });
+
+  describe('createManualFace', () => {
+    const dto = {
+      assetId: 'asset-1',
+      personId: 'person-1',
+      imageWidth: 1000,
+      imageHeight: 800,
+      x: 10,
+      y: 20,
+      width: 50,
+      height: 60,
+    };
+
+    it('should reject a caller without create-face access', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.library.checkEditorAccess.mockResolvedValue(new Set());
+
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.person.createManualFaceForLibrary).not.toHaveBeenCalled();
+    });
+
+    it('should reject when the asset cannot be found at all', async () => {
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.asset.getById.mockResolvedValue(undefined as any);
+
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.person.createManualFaceForLibrary).not.toHaveBeenCalled();
+    });
+
+    // Covers the person or the asset turning out to be out of this library's scope - both collapse to a
+    // null return from the primitive, which re-verifies both freshly, inside its own transaction,
+    // immediately before writing (this is also the H1 fix: the service no longer trusts a plain
+    // libraryId-equality check on the asset - see the primitive's own medium spec for the individual
+    // Timeline/soft-delete/cross-library scope conditions tested against a real database).
+    it('should throw when the repository primitive rejects the request', async () => {
+      const asset = AssetFactory.create({ id: 'asset-1', width: 1000, height: 800 });
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+      mocks.person.createManualFaceForLibrary.mockResolvedValue(null);
+
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+    });
+
+    it('should create a face directly from the given box when the asset has no edits', async () => {
+      const asset = AssetFactory.create({ id: 'asset-1', libraryId: 'library-id', width: 1000, height: 800 });
+      const person = { id: 'person-1', name: 'Alice', faceAssetId: 'existing-face' };
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+      mocks.person.createManualFaceForLibrary.mockResolvedValue({ faceId: 'face-1', needsFeaturePhoto: [] });
+      mocks.person.getById.mockResolvedValue(person as any);
+
+      const result = await sut.createManualFace(authStub.user1, 'library-id', dto);
+
+      expect(mocks.person.createManualFaceForLibrary).toHaveBeenCalledWith(
+        'library-id',
+        authStub.user1.user.id,
+        'person-1',
+        'asset-1',
+        expect.objectContaining({
+          imageWidth: 1000,
+          imageHeight: 800,
+          boundingBoxX1: 10,
+          boundingBoxY1: 20,
+          boundingBoxX2: 60,
+          boundingBoxY2: 80,
+        }),
+      );
+      expect(mocks.job.queueAll).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({ id: 'face-1', person: { id: 'person-1', name: 'Alice' } }));
+    });
+
+    it('should queue a feature-photo refresh when the repository primitive reports one is needed', async () => {
+      const asset = AssetFactory.create({ id: 'asset-1', libraryId: 'library-id', width: 1000, height: 800 });
+      const person = { id: 'person-1', name: 'Alice', faceAssetId: null };
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.asset.getById.mockResolvedValue(getForAsset(asset));
+      mocks.person.createManualFaceForLibrary.mockResolvedValue({
+        faceId: 'face-1',
+        needsFeaturePhoto: ['person-1'],
+      });
+      mocks.person.getById.mockResolvedValue(person as any);
+
+      await sut.createManualFace(authStub.user1, 'library-id', dto);
+
+      expect(mocks.job.queueAll).toHaveBeenCalledWith([
+        { name: JobName.PersonGenerateThumbnail, data: { id: 'person-1' } },
+      ]);
+    });
+
+    it('should switch to the original exif dimensions when the asset has edits', async () => {
+      const asset = AssetFactory.from({ id: 'asset-1', libraryId: 'library-id', width: 1000, height: 800 })
+        .exif({ exifImageWidth: 4000, exifImageHeight: 3200, orientation: '1' })
+        .edit({ parameters: { x: 0, y: 0, width: 1000, height: 800 } })
+        .build();
+      const person = { id: 'person-1', name: 'Alice', faceAssetId: 'x' };
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+      mocks.asset.getById.mockResolvedValue(asset as any);
+      mocks.person.createManualFaceForLibrary.mockResolvedValue({ faceId: 'face-1', needsFeaturePhoto: [] });
+      mocks.person.getById.mockResolvedValue(person as any);
+
+      await sut.createManualFace(authStub.user1, 'library-id', dto);
+
+      // the value passed to the repository switches to the original exif dimensions, not the (possibly
+      // downscaled) preview dimensions the box was drawn against - the exact transformed box is
+      // transformPoints' own concern, already covered by its own tests.
+      expect(mocks.person.createManualFaceForLibrary).toHaveBeenCalledWith(
+        'library-id',
+        authStub.user1.user.id,
+        'person-1',
+        'asset-1',
+        expect.objectContaining({ imageWidth: 4000, imageHeight: 3200 }),
+      );
     });
   });
 });
