@@ -79,7 +79,13 @@ export class AssetService extends BaseService {
       return mapAsset(asset, { stripMetadata: true, withStack: true, auth });
     }
 
-    const data = mapAsset(asset, { withStack: true, auth });
+    let sameLibraryLivePhoto = false;
+    if (asset.libraryId && asset.ownerId !== auth.user.id && !auth.user.isAdmin && asset.livePhotoVideoId) {
+      const motion = await this.assetRepository.getById(asset.livePhotoVideoId, {});
+      sameLibraryLivePhoto = motion?.libraryId === asset.libraryId;
+    }
+
+    const data = mapAsset(asset, { withStack: true, auth, sameLibraryLivePhoto });
 
     if (auth.sharedLink) {
       delete data.owner;
@@ -382,12 +388,12 @@ export class AssetService extends BaseService {
   }
 
   async getMetadata(auth: AuthDto, id: string): Promise<AssetMetadataResponseDto[]> {
-    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [id] });
+    await this.requireOwnerAccess(auth, id);
     return this.assetRepository.getMetadata(id);
   }
 
   async getOcr(auth: AuthDto, id: string): Promise<AssetOcrResponseDto[]> {
-    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [id] });
+    await this.requireOwnerAccess(auth, id);
     const ocr = await this.ocrRepository.getByAssetId(id);
     const asset = await this.assetRepository.getForOcr(id);
 
@@ -436,7 +442,7 @@ export class AssetService extends BaseService {
   }
 
   async getMetadataByKey(auth: AuthDto, id: string, key: string): Promise<AssetMetadataResponseDto> {
-    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [id] });
+    await this.requireOwnerAccess(auth, id);
 
     const item = await this.assetRepository.getMetadataByKey(id, key);
     if (!item) {
@@ -495,6 +501,19 @@ export class AssetService extends BaseService {
     return asset;
   }
 
+  // Metadata key-values and OCR results are account-scoped, so they stay owner-only even though album,
+  // partner, and shared-library grants broaden Permission.AssetRead for viewing and downloading.
+  private async requireOwnerAccess(auth: AuthDto, id: string) {
+    const isOwner = await this.accessRepository.asset.checkOwnerAccess(
+      auth.user.id,
+      new Set([id]),
+      auth.session?.hasElevatedPermission,
+    );
+    if (!isOwner.has(id)) {
+      throw new BadRequestException(`Not found or no ${Permission.AssetRead} access`);
+    }
+  }
+
   private async updateExif(dto: {
     id: string;
     description?: string;
@@ -529,7 +548,7 @@ export class AssetService extends BaseService {
   }
 
   async getAssetEdits(auth: AuthDto, id: string): Promise<AssetEditsResponseDto> {
-    await this.requireAccess({ auth, permission: Permission.AssetRead, ids: [id] });
+    await this.requireAccess({ auth, permission: Permission.AssetEditGet, ids: [id] });
     const edits = await this.assetEditRepository.getAll(id);
 
     return {

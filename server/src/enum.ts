@@ -70,6 +70,16 @@ export enum AlbumUserRole {
 
 export const AlbumUserRoleSchema = z.enum(AlbumUserRole).describe('Album user role').meta({ id: 'AlbumUserRole' });
 
+export enum LibraryUserRole {
+  Viewer = 'viewer',
+  Editor = 'editor',
+}
+
+export const LibraryUserRoleSchema = z
+  .enum(LibraryUserRole)
+  .describe('Library user role')
+  .meta({ id: 'LibraryUserRole' });
+
 export enum AssetOrder {
   Asc = 'asc',
   Desc = 'desc',
@@ -178,6 +188,7 @@ export enum Permission {
   LibraryUpdate = 'library.update',
   LibraryDelete = 'library.delete',
   LibraryStatistics = 'library.statistics',
+  LibraryShare = 'library.share',
 
   TimelineRead = 'timeline.read',
   TimelineDownload = 'timeline.download',

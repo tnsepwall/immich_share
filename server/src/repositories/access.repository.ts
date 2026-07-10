@@ -225,6 +225,35 @@ class AssetAccess {
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryAccess(userId: string, assetIds: Set<string>) {
+    if (assetIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .innerJoin('asset', (join) => join.onRef('asset.libraryId', '=', 'library.id').on('asset.deletedAt', 'is', null))
+      .select('asset.id')
+      .where('library_user.userId', '=', userId)
+      .where((eb) =>
+        eb.or([
+          eb('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+          eb('asset.visibility', '=', sql.lit(AssetVisibility.Hidden)),
+        ]),
+      )
+      .where('asset.id', 'in', [...assetIds])
+      .execute()
+      .then((assets) => new Set(assets.map((asset) => asset.id)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
   async checkSharedLinkAccess(sharedLinkId: string, assetIds: Set<string>) {
     if (assetIds.size === 0) {
       return new Set<string>();
@@ -396,6 +425,49 @@ class TimelineAccess {
   }
 }
 
+class LibraryAccess {
+  constructor(private db: Kysely<DB>) {}
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkOwnerAccess(userId: string, libraryIds: Set<string>) {
+    if (libraryIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library')
+      .select('library.id')
+      .where('library.id', 'in', [...libraryIds])
+      .where('library.ownerId', '=', userId)
+      .where('library.deletedAt', 'is', null)
+      .execute()
+      .then((libraries) => new Set(libraries.map((library) => library.id)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSharedAccess(userId: string, libraryIds: Set<string>) {
+    if (libraryIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select('library.id')
+      .where('library_user.libraryId', 'in', [...libraryIds])
+      .where('library_user.userId', '=', userId)
+      .execute()
+      .then((libraries) => new Set(libraries.map((library) => library.id)));
+  }
+}
+
 class MemoryAccess {
   constructor(private db: Kysely<DB>) {}
 
@@ -521,6 +593,7 @@ export class AccessRepository {
   asset: AssetAccess;
   authDevice: AuthDeviceAccess;
   duplicate: DuplicateAccess;
+  library: LibraryAccess;
   memory: MemoryAccess;
   notification: NotificationAccess;
   person: PersonAccess;
@@ -537,6 +610,7 @@ export class AccessRepository {
     this.asset = new AssetAccess(db);
     this.authDevice = new AuthDeviceAccess(db);
     this.duplicate = new DuplicateAccess(db);
+    this.library = new LibraryAccess(db);
     this.memory = new MemoryAccess(db);
     this.notification = new NotificationAccess(db);
     this.person = new PersonAccess(db);

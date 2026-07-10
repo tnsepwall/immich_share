@@ -215,5 +215,91 @@ describe(TimelineService.name, () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    describe('libraryId', () => {
+      it('should give the owner full filter freedom', async () => {
+        const json = `[{ id: ['asset-id'] }]`;
+        mocks.asset.getTimeBucket.mockResolvedValue({ assets: json });
+        mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+        mocks.library.get.mockResolvedValue({ id: 'library-id', ownerId: authStub.user1.user.id } as any);
+
+        await expect(
+          sut.getTimeBucket(authStub.user1, {
+            timeBucket: 'bucket',
+            libraryId: 'library-id',
+            visibility: AssetVisibility.Archive,
+          }),
+        ).resolves.toEqual(json);
+
+        expect(mocks.asset.getTimeBucket).toHaveBeenCalledWith(
+          'bucket',
+          expect.objectContaining({
+            libraryId: 'library-id',
+            visibility: AssetVisibility.Archive,
+            userIds: [authStub.user1.user.id],
+          }),
+          authStub.user1,
+        );
+      });
+
+      it('should force Timeline visibility and disable stacks for a shared recipient', async () => {
+        const json = `[{ id: ['asset-id'] }]`;
+        mocks.asset.getTimeBucket.mockResolvedValue({ assets: json });
+        mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+        mocks.access.library.checkSharedAccess.mockResolvedValue(new Set(['library-id']));
+        mocks.library.get.mockResolvedValue({ id: 'library-id', ownerId: authStub.user1.user.id } as any);
+
+        await expect(
+          sut.getTimeBucket(authStub.user2, {
+            timeBucket: 'bucket',
+            libraryId: 'library-id',
+            withStacked: true,
+          }),
+        ).resolves.toEqual(json);
+
+        expect(mocks.asset.getTimeBucket).toHaveBeenCalledWith(
+          'bucket',
+          expect.objectContaining({
+            libraryId: 'library-id',
+            visibility: AssetVisibility.Timeline,
+            withStacked: false,
+            userIds: [authStub.user1.user.id],
+          }),
+          authStub.user2,
+        );
+      });
+
+      it('should reject a stranger with no owner or shared access', async () => {
+        mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+        mocks.access.library.checkSharedAccess.mockResolvedValue(new Set());
+
+        await expect(
+          sut.getTimeBucket(authStub.user2, { timeBucket: 'bucket', libraryId: 'library-id' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(mocks.library.get).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        { isTrashed: true },
+        { isFavorite: true },
+        { isFavorite: false },
+        { visibility: AssetVisibility.Archive },
+        { withPartners: true },
+      ])('should reject a recipient requesting a restricted filter: %j', async (filter) => {
+        mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+        mocks.access.library.checkSharedAccess.mockResolvedValue(new Set(['library-id']));
+        mocks.library.get.mockResolvedValue({ id: 'library-id', ownerId: authStub.user1.user.id } as any);
+
+        await expect(
+          sut.getTimeBucket(authStub.user2, { timeBucket: 'bucket', libraryId: 'library-id', ...filter }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('should reject combining libraryId with albumId', async () => {
+        await expect(
+          sut.getTimeBucket(authStub.user1, { timeBucket: 'bucket', libraryId: 'library-id', albumId: 'album-id' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
   });
 });

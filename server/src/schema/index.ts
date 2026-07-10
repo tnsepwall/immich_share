@@ -4,6 +4,7 @@ import {
   asset_face_source_type,
   asset_visibility_enum,
   assets_status_enum,
+  library_user_role_enum,
 } from 'src/schema/enums';
 import {
   album_user_after_insert,
@@ -15,6 +16,7 @@ import {
   f_concat_ws,
   f_unaccent,
   immich_uuid_v7,
+  library_user_delete_audit,
   ll_to_earth_public,
   memory_asset_delete_audit,
   memory_delete_audit,
@@ -50,6 +52,8 @@ import { AssetTable } from 'src/schema/tables/asset.table';
 import { FaceSearchTable } from 'src/schema/tables/face-search.table';
 import { GeodataPlacesTable } from 'src/schema/tables/geodata-places.table';
 import { IntegrityReportTable } from 'src/schema/tables/integrity-report.table';
+import { LibraryUserAuditTable } from 'src/schema/tables/library-user-audit.table';
+import { LibraryUserTable } from 'src/schema/tables/library-user.table';
 import { LibraryTable } from 'src/schema/tables/library.table';
 import { MemoryAssetAuditTable } from 'src/schema/tables/memory-asset-audit.table';
 import { MemoryAssetTable } from 'src/schema/tables/memory-asset.table';
@@ -118,6 +122,8 @@ export class ImmichDatabase {
     GeodataPlacesTable,
     IntegrityReportTable,
     LibraryTable,
+    LibraryUserTable,
+    LibraryUserAuditTable,
     MemoryTable,
     MemoryAuditTable,
     MemoryAssetTable,
@@ -166,6 +172,7 @@ export class ImmichDatabase {
     asset_delete_audit,
     album_user_after_insert,
     album_user_delete_audit,
+    library_user_delete_audit,
     memory_delete_audit,
     memory_asset_delete_audit,
     stack_delete_audit,
@@ -176,7 +183,13 @@ export class ImmichDatabase {
     asset_ocr_delete_audit,
   ];
 
-  enum = [album_user_role_enum, assets_status_enum, asset_face_source_type, asset_visibility_enum];
+  enum = [
+    album_user_role_enum,
+    assets_status_enum,
+    asset_face_source_type,
+    asset_visibility_enum,
+    library_user_role_enum,
+  ];
 }
 
 export interface Migrations {
@@ -224,6 +237,8 @@ export interface DB {
   integrity_report: IntegrityReportTable;
 
   library: LibraryTable;
+  library_user: LibraryUserTable;
+  library_user_audit: LibraryUserAuditTable;
 
   memory: MemoryTable;
   memory_audit: MemoryAuditTable;

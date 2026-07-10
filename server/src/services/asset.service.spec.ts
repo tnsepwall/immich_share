@@ -649,6 +649,69 @@ describe(AssetService.name, () => {
 
       expect(mocks.ocr.getByAssetId).toHaveBeenCalledWith(asset.id);
     });
+
+    it('should deny non-owners even when shared library access grants asset.read', async () => {
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkSharedLibraryAccess.mockResolvedValue(new Set(['asset-1']));
+
+      await expect(sut.getOcr(authStub.admin, 'asset-1')).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.ocr.getByAssetId).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getMetadata', () => {
+    it('should require the user to be the asset owner', async () => {
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkSharedLibraryAccess.mockResolvedValue(new Set(['asset-1']));
+
+      await expect(sut.getMetadata(authStub.admin, 'asset-1')).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.asset.getMetadata).not.toHaveBeenCalled();
+    });
+
+    it('should return metadata for the owner', async () => {
+      const item = { key: AssetMetadataKey.MobileApp, value: { iCloudId: 'icloud-1' }, updatedAt: new Date() };
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set(['asset-1']));
+      mocks.asset.getMetadata.mockResolvedValue([item]);
+
+      await expect(sut.getMetadata(authStub.admin, 'asset-1')).resolves.toEqual([item]);
+    });
+  });
+
+  describe('getMetadataByKey', () => {
+    it('should require the user to be the asset owner', async () => {
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkAlbumAccess.mockResolvedValue(new Set(['asset-1']));
+
+      await expect(sut.getMetadataByKey(authStub.admin, 'asset-1', AssetMetadataKey.MobileApp)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      expect(mocks.asset.getMetadataByKey).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getAssetEdits', () => {
+    it('should require the user to be the asset owner', async () => {
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkPartnerAccess.mockResolvedValue(new Set(['asset-1']));
+
+      await expect(sut.getAssetEdits(authStub.admin, 'asset-1')).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.assetEdit.getAll).not.toHaveBeenCalled();
+    });
+
+    it('should return edits for the owner', async () => {
+      const edit = { id: newUuid(), action: AssetEditAction.Rotate, parameters: { angle: 90 as const } };
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set(['asset-1']));
+      mocks.assetEdit.getAll.mockResolvedValue([edit]);
+
+      await expect(sut.getAssetEdits(authStub.admin, 'asset-1')).resolves.toEqual({
+        assetId: 'asset-1',
+        edits: [edit],
+      });
+    });
   });
 
   describe('run', () => {

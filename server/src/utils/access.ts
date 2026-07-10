@@ -117,7 +117,11 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       const isOwner = await access.asset.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
       const isAlbum = await access.asset.checkAlbumAccess(auth.user.id, setDifference(ids, isOwner));
       const isPartner = await access.asset.checkPartnerAccess(auth.user.id, setDifference(ids, isOwner, isAlbum));
-      return setUnion(isOwner, isAlbum, isPartner);
+      const isSharedLibrary = await access.asset.checkSharedLibraryAccess(
+        auth.user.id,
+        setDifference(ids, isOwner, isAlbum, isPartner),
+      );
+      return setUnion(isOwner, isAlbum, isPartner, isSharedLibrary);
     }
 
     case Permission.AssetShare: {
@@ -130,14 +134,22 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       const isOwner = await access.asset.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
       const isAlbum = await access.asset.checkAlbumAccess(auth.user.id, setDifference(ids, isOwner));
       const isPartner = await access.asset.checkPartnerAccess(auth.user.id, setDifference(ids, isOwner, isAlbum));
-      return setUnion(isOwner, isAlbum, isPartner);
+      const isSharedLibrary = await access.asset.checkSharedLibraryAccess(
+        auth.user.id,
+        setDifference(ids, isOwner, isAlbum, isPartner),
+      );
+      return setUnion(isOwner, isAlbum, isPartner, isSharedLibrary);
     }
 
     case Permission.AssetDownload: {
       const isOwner = await access.asset.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
       const isAlbum = await access.asset.checkAlbumAccess(auth.user.id, setDifference(ids, isOwner));
       const isPartner = await access.asset.checkPartnerAccess(auth.user.id, setDifference(ids, isOwner, isAlbum));
-      return setUnion(isOwner, isAlbum, isPartner);
+      const isSharedLibrary = await access.asset.checkSharedLibraryAccess(
+        auth.user.id,
+        setDifference(ids, isOwner, isAlbum, isPartner),
+      );
+      return setUnion(isOwner, isAlbum, isPartner, isSharedLibrary);
     }
 
     case Permission.AssetUpdate: {
@@ -247,6 +259,18 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
 
     case Permission.FaceDelete: {
       return access.person.checkFaceOwnerAccess(auth.user.id, ids);
+    }
+
+    // uses library id
+    case Permission.LibraryRead: {
+      const isOwner = await access.library.checkOwnerAccess(auth.user.id, ids);
+      const isShared = await access.library.checkSharedAccess(auth.user.id, setDifference(ids, isOwner));
+      return setUnion(isOwner, isShared);
+    }
+
+    // uses library id; owner (or admin, handled before reaching checkOtherAccess) only
+    case Permission.LibraryShare: {
+      return access.library.checkOwnerAccess(auth.user.id, ids);
     }
 
     case Permission.NotificationRead:

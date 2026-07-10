@@ -3,12 +3,14 @@ import { Stats } from 'node:fs';
 import { defaults, SystemConfig } from 'src/config';
 import { JOBS_LIBRARY_PAGINATION_SIZE } from 'src/constants';
 import { mapLibrary } from 'src/dtos/library.dto';
-import { AssetType, CronJob, ImmichWorker, JobName, JobStatus } from 'src/enum';
+import { AssetType, CronJob, ImmichWorker, JobName, JobStatus, LibraryUserRole } from 'src/enum';
 import { LibraryService } from 'src/services/library.service';
 import { ILibraryBulkIdsJob, ILibraryFileJob } from 'src/types';
 import { AssetFactory } from 'test/factories/asset.factory';
+import { UserFactory } from 'test/factories/user.factory';
 import { authStub } from 'test/fixtures/auth.stub';
 import { systemConfigStub } from 'test/fixtures/system-config.stub';
+import { getDehydrated } from 'test/mappers';
 import { makeMockWatcher } from 'test/repositories/storage.repository.mock';
 import { factory, newDate, newUuid } from 'test/small.factory';
 import { makeStream, newTestService, ServiceMocks } from 'test/utils';
@@ -17,6 +19,14 @@ import { vitest } from 'vitest';
 async function* mockWalk() {
   yield await Promise.resolve(['/data/user1/photo.jpg']);
 }
+
+const shareRow = (row: { libraryId: string; userId: string; user: any; role: LibraryUserRole }) => ({
+  createId: newUuid(),
+  createdAt: newDate(),
+  updateId: newUuid(),
+  updatedAt: newDate(),
+  ...row,
+});
 
 describe(LibraryService.name, () => {
   let sut: LibraryService;
@@ -1296,6 +1306,247 @@ describe(LibraryService.name, () => {
           },
         ],
       });
+    });
+  });
+
+  describe('getMine', () => {
+    it('should attach shared users to each owned library', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const viewer = UserFactory.create();
+
+      mocks.library.getOwned.mockResolvedValue([library]);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: viewer.id, user: getDehydrated(viewer), role: LibraryUserRole.Viewer }),
+      ]);
+
+      const result = await sut.getMine(owner);
+
+      expect(mocks.library.getOwned).toHaveBeenCalledWith(owner.user.id);
+      expect(result[0].sharedUsers).toEqual([{ user: expect.objectContaining({ id: viewer.id }), role: 'viewer' }]);
+    });
+  });
+
+  describe('getSharedWithMe', () => {
+    it('should map libraries shared with the current user, omitting import paths', async () => {
+      const auth = factory.auth();
+      const owner = UserFactory.create();
+      const library = factory.library({ ownerId: owner.id, importPaths: ['/secret/path'] });
+
+      mocks.library.getSharedWithUser.mockResolvedValue([
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Editor, assetCount: 3 },
+      ]);
+
+      const result = await sut.getSharedWithMe(auth);
+
+      expect(mocks.library.getSharedWithUser).toHaveBeenCalledWith(auth.user.id);
+      expect(result).toEqual([
+        {
+          id: library.id,
+          name: library.name,
+          ownerId: owner.id,
+          owner: expect.objectContaining({ id: owner.id }),
+          role: 'editor',
+          createdAt: library.createdAt,
+          refreshedAt: library.refreshedAt,
+          assetCount: 3,
+        },
+      ]);
+      expect(result[0]).not.toHaveProperty('importPaths');
+    });
+  });
+
+  describe('addUsers', () => {
+    it('should let the owner share the library with a default Viewer role', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
+        ]);
+      mocks.user.get.mockResolvedValue(target);
+
+      const result = await sut.addUsers(owner, library.id, { users: [{ userId: target.id, role: LibraryUserRole.Viewer }] });
+
+      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [{ userId: target.id, role: LibraryUserRole.Viewer }]);
+      expect(result).toEqual([{ user: expect.objectContaining({ id: target.id }), role: 'viewer' }]);
+    });
+
+    it('should let an admin share a library they do not own', async () => {
+      const admin = factory.auth({ user: { isAdmin: true } });
+      const library = factory.library();
+      const target = UserFactory.create();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
+      mocks.user.get.mockResolvedValue(target);
+
+      await sut.addUsers(admin, library.id, { users: [{ userId: target.id, role: LibraryUserRole.Editor }] });
+
+      expect(mocks.access.library.checkOwnerAccess).not.toHaveBeenCalled();
+      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [{ userId: target.id, role: LibraryUserRole.Editor }]);
+    });
+
+    it('should reject a non-owner, non-admin caller', async () => {
+      const stranger = factory.auth();
+      const library = factory.library();
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+
+      await expect(
+        sut.addUsers(stranger, library.id, { users: [{ userId: newUuid(), role: LibraryUserRole.Viewer }] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.addUsers).not.toHaveBeenCalled();
+    });
+
+    it('should reject sharing the library with its own owner', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
+
+      await expect(
+        sut.addUsers(owner, library.id, { users: [{ userId: owner.user.id, role: LibraryUserRole.Viewer }] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.addUsers).not.toHaveBeenCalled();
+    });
+
+    it('should reject re-sharing with an already-shared user', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
+      ]);
+
+      await expect(
+        sut.addUsers(owner, library.id, { users: [{ userId: target.id, role: LibraryUserRole.Editor }] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.addUsers).not.toHaveBeenCalled();
+    });
+
+    it('should reject an unknown user id', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
+      mocks.user.get.mockResolvedValue(void 0);
+
+      await expect(
+        sut.addUsers(owner, library.id, { users: [{ userId: newUuid(), role: LibraryUserRole.Viewer }] }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.addUsers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateUserRole', () => {
+    it('should let the owner promote a viewer to editor', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.updateUserRole.mockResolvedValue({
+        libraryId: library.id,
+        userId: target.id,
+        role: LibraryUserRole.Editor,
+      } as any);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Editor }),
+      ]);
+
+      const result = await sut.updateUserRole(owner, library.id, target.id, { role: LibraryUserRole.Editor });
+
+      expect(mocks.library.updateUserRole).toHaveBeenCalledWith(library.id, target.id, LibraryUserRole.Editor);
+      expect(result).toEqual({ user: expect.objectContaining({ id: target.id }), role: 'editor' });
+    });
+
+    it('should throw when the target user has no existing share', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.updateUserRole.mockResolvedValue(void 0);
+
+      await expect(
+        sut.updateUserRole(owner, library.id, newUuid(), { role: LibraryUserRole.Editor }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('removeUser', () => {
+    it('should let the owner remove a shared user', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
+      ]);
+
+      await sut.removeUser(owner, library.id, target.id);
+
+      expect(mocks.library.removeUser).toHaveBeenCalledWith(library.id, target.id);
+    });
+
+    it('should let a shared user leave using "me" without requiring library.share access', async () => {
+      const recipient = factory.auth();
+      const library = factory.library();
+
+      const recipientUser = UserFactory.create({ id: recipient.user.id });
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({
+          libraryId: library.id,
+          userId: recipient.user.id,
+          user: getDehydrated(recipientUser),
+          role: LibraryUserRole.Viewer,
+        }),
+      ]);
+
+      await sut.removeUser(recipient, library.id, 'me');
+
+      expect(mocks.access.library.checkOwnerAccess).not.toHaveBeenCalled();
+      expect(mocks.library.removeUser).toHaveBeenCalledWith(library.id, recipient.user.id);
+    });
+
+    it('should reject a non-owner removing someone else', async () => {
+      const stranger = factory.auth();
+      const library = factory.library();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
+
+      await expect(sut.removeUser(stranger, library.id, newUuid())).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.removeUser).not.toHaveBeenCalled();
+    });
+
+    it('should throw when the user is not shared on the library', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getSharedUsers.mockResolvedValue([]);
+
+      await expect(sut.removeUser(owner, library.id, newUuid())).rejects.toBeInstanceOf(BadRequestException);
+      expect(mocks.library.removeUser).not.toHaveBeenCalled();
     });
   });
 });

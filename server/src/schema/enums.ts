@@ -1,9 +1,22 @@
 import { registerEnum } from '@immich/sql-tools';
-import { AlbumUserRole, AssetStatus, AssetVisibility, ChecksumAlgorithm, SourceType, VideoCodec } from 'src/enum';
+import {
+  AlbumUserRole,
+  AssetStatus,
+  AssetVisibility,
+  ChecksumAlgorithm,
+  LibraryUserRole,
+  SourceType,
+  VideoCodec,
+} from 'src/enum';
 
 export const album_user_role_enum = registerEnum({
   name: 'album_user_role_enum',
   values: [AlbumUserRole.Owner, AlbumUserRole.Editor, AlbumUserRole.Viewer],
+});
+
+export const library_user_role_enum = registerEnum({
+  name: 'library_user_role_enum',
+  values: [LibraryUserRole.Viewer, LibraryUserRole.Editor],
 });
 
 export const assets_status_enum = registerEnum({

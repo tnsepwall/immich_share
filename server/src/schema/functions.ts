@@ -153,6 +153,19 @@ export const album_user_delete_audit = registerFunction({
     END`,
 });
 
+export const library_user_delete_audit = registerFunction({
+  name: 'library_user_delete_audit',
+  returnType: 'TRIGGER',
+  language: 'PLPGSQL',
+  body: `
+    BEGIN
+      INSERT INTO library_user_audit ("libraryId", "userId")
+      SELECT "libraryId", "userId"
+      FROM OLD;
+      RETURN NULL;
+    END`,
+});
+
 export const memory_delete_audit = registerFunction({
   name: 'memory_delete_audit',
   returnType: 'TRIGGER',

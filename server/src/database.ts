@@ -6,6 +6,7 @@ import {
   AssetType,
   AssetVisibility,
   ChecksumAlgorithm,
+  LibraryUserRole,
   MemoryType,
   Permission,
   SharedLinkType,
@@ -31,6 +32,24 @@ export type AuthUser = {
 export type AlbumUser = {
   user: ShallowDehydrateObject<User>;
   role: AlbumUserRole;
+};
+
+export type LibraryUser = {
+  libraryId: string;
+  userId: string;
+  user: ShallowDehydrateObject<User>;
+  role: LibraryUserRole;
+  createId: string;
+  createdAt: Date;
+  updateId: string;
+  updatedAt: Date;
+};
+
+export type SharedLibrary = Library & {
+  role: LibraryUserRole;
+  owner: ShallowDehydrateObject<User>;
+  // Kysely types a correlated scalar-subquery column as nullable even though COUNT(*) never returns SQL NULL.
+  assetCount: number | null;
 };
 
 export type AssetFile = {

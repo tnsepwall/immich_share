@@ -7,11 +7,18 @@ import picomatch from 'picomatch';
 import { JOBS_LIBRARY_PAGINATION_SIZE } from 'src/constants';
 import { StorageCore } from 'src/cores/storage.core';
 import { OnEvent, OnJob } from 'src/decorators';
+import { AuthDto } from 'src/dtos/auth.dto';
 import {
   CreateLibraryDto,
   LibraryResponseDto,
   LibraryStatsResponseDto,
+  LibraryUserResponseDto,
+  LibraryUsersDto,
+  LibraryUserUpdateDto,
   mapLibrary,
+  mapLibraryUser,
+  mapSharedLibrary,
+  SharedLibraryResponseDto,
   UpdateLibraryDto,
   ValidateLibraryDto,
   ValidateLibraryImportPathResponseDto,
@@ -26,6 +33,8 @@ import {
   ImmichWorker,
   JobName,
   JobStatus,
+  LibraryUserRole,
+  Permission,
   QueueName,
 } from 'src/enum';
 import { ArgOf } from 'src/repositories/event.repository';
@@ -210,6 +219,91 @@ export class LibraryService extends BaseService {
   async getAll(): Promise<LibraryResponseDto[]> {
     const libraries = await this.libraryRepository.getAll(false);
     return libraries.map((library) => mapLibrary(library));
+  }
+
+  async getMine(auth: AuthDto): Promise<LibraryResponseDto[]> {
+    const libraries = await this.libraryRepository.getOwned(auth.user.id);
+    return Promise.all(
+      libraries.map(async (library) => {
+        const sharedUsers = await this.libraryRepository.getSharedUsers(library.id);
+        return mapLibrary(library, { sharedUsers: sharedUsers.map((user) => mapLibraryUser(user)) });
+      }),
+    );
+  }
+
+  async getSharedWithMe(auth: AuthDto): Promise<SharedLibraryResponseDto[]> {
+    const libraries = await this.libraryRepository.getSharedWithUser(auth.user.id);
+    return libraries.map((library) => mapSharedLibrary(library));
+  }
+
+  async addUsers(auth: AuthDto, id: string, dto: LibraryUsersDto): Promise<LibraryUserResponseDto[]> {
+    if (!auth.user.isAdmin) {
+      await this.requireAccess({ auth, permission: Permission.LibraryShare, ids: [id] });
+    }
+
+    const library = await this.findOrFail(id);
+    const existingShares = await this.libraryRepository.getSharedUsers(id);
+    const existingUserIds = new Set(existingShares.map((share) => share.userId));
+
+    const users: { userId: string; role: LibraryUserRole }[] = [];
+    for (const { userId, role } of dto.users) {
+      if (userId === library.ownerId) {
+        throw new BadRequestException('Cannot share a library with its owner');
+      }
+
+      if (existingUserIds.has(userId)) {
+        throw new BadRequestException(`Library is already shared with user ${userId}`);
+      }
+
+      const exists = await this.userRepository.get(userId, {});
+      if (!exists) {
+        throw new BadRequestException('Invalid user');
+      }
+
+      users.push({ userId, role });
+    }
+
+    await this.libraryRepository.addUsers(id, users);
+
+    const sharedUsers = await this.libraryRepository.getSharedUsers(id);
+    return sharedUsers.map((user) => mapLibraryUser(user));
+  }
+
+  async updateUserRole(auth: AuthDto, id: string, userId: string, dto: LibraryUserUpdateDto): Promise<LibraryUserResponseDto> {
+    if (!auth.user.isAdmin) {
+      await this.requireAccess({ auth, permission: Permission.LibraryShare, ids: [id] });
+    }
+
+    await this.findOrFail(id);
+
+    const updated = await this.libraryRepository.updateUserRole(id, userId, dto.role);
+    if (!updated) {
+      throw new BadRequestException('Library is not shared with user');
+    }
+
+    const sharedUsers = await this.libraryRepository.getSharedUsers(id);
+    const user = sharedUsers.find((share) => share.userId === userId);
+    return mapLibraryUser(user!);
+  }
+
+  async removeUser(auth: AuthDto, id: string, userId: string | 'me'): Promise<void> {
+    if (userId === 'me') {
+      userId = auth.user.id;
+    }
+
+    await this.findOrFail(id);
+
+    if (auth.user.id !== userId && !auth.user.isAdmin) {
+      await this.requireAccess({ auth, permission: Permission.LibraryShare, ids: [id] });
+    }
+
+    const sharedUsers = await this.libraryRepository.getSharedUsers(id);
+    const exists = sharedUsers.some((share) => share.userId === userId);
+    if (!exists) {
+      throw new BadRequestException('Library is not shared with user');
+    }
+
+    await this.libraryRepository.removeUser(id, userId);
   }
 
   @OnJob({ name: JobName.LibraryDeleteCheck, queue: QueueName.Library })

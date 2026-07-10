@@ -58,6 +58,7 @@ export class SyncRepository {
   assetMetadata: AssetMetadataSync;
   assetOcr: AssetOcrSync;
   authUser: AuthUserSync;
+  libraryUser: LibraryUserSync;
   memory: MemorySync;
   memoryToAsset: MemoryToAssetSync;
   partner: PartnerSync;
@@ -82,6 +83,7 @@ export class SyncRepository {
     this.assetMetadata = new AssetMetadataSync(this.db);
     this.assetOcr = new AssetOcrSync(this.db);
     this.authUser = new AuthUserSync(this.db);
+    this.libraryUser = new LibraryUserSync(this.db);
     this.memory = new MemorySync(this.db);
     this.memoryToAsset = new MemoryToAssetSync(this.db);
     this.partner = new PartnerSync(this.db);
@@ -415,6 +417,13 @@ class AuthUserSync extends BaseSync {
       .select(['isAdmin', 'pinCode', 'oauthId', 'storageLabel', 'quotaSizeInBytes', 'quotaUsageInBytes'])
       .where('id', '=', options.userId)
       .stream();
+  }
+}
+
+// Cleanup-only: full mobile sync of shared-library shares is a v1 follow-up.
+class LibraryUserSync extends BaseSync {
+  cleanupAuditTable(daysAgo: number) {
+    return this.auditCleanup('library_user_audit', daysAgo);
   }
 }
 

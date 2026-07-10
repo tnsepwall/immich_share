@@ -1,18 +1,23 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
+import { AuthDto } from 'src/dtos/auth.dto';
 import {
   CreateLibraryDto,
   LibraryResponseDto,
   LibraryStatsResponseDto,
+  LibraryUserResponseDto,
+  LibraryUsersDto,
+  LibraryUserUpdateDto,
+  SharedLibraryResponseDto,
   UpdateLibraryDto,
   ValidateLibraryDto,
   ValidateLibraryResponseDto,
 } from 'src/dtos/library.dto';
 import { ApiTag, Permission } from 'src/enum';
-import { Authenticated } from 'src/middleware/auth.guard';
+import { Auth, Authenticated } from 'src/middleware/auth.guard';
 import { LibraryService } from 'src/services/library.service';
-import { UUIDParamDto } from 'src/validation';
+import { ParseMeUUIDPipe, UUIDParamDto } from 'src/validation';
 
 @ApiTags(ApiTag.Libraries)
 @Controller('libraries')
@@ -39,6 +44,28 @@ export class LibraryController {
   })
   createLibrary(@Body() dto: CreateLibraryDto): Promise<LibraryResponseDto> {
     return this.service.create(dto);
+  }
+
+  @Get('mine')
+  @Authenticated({ permission: Permission.LibraryRead })
+  @Endpoint({
+    summary: 'Retrieve my libraries',
+    description: 'Retrieve the external libraries owned by the current user, including their shared users.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  getMyLibraries(@Auth() auth: AuthDto): Promise<LibraryResponseDto[]> {
+    return this.service.getMine(auth);
+  }
+
+  @Get('shared-with-me')
+  @Authenticated({ permission: Permission.LibraryRead })
+  @Endpoint({
+    summary: 'Retrieve libraries shared with me',
+    description: 'Retrieve the external libraries other users have shared with the current user.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  getLibrariesSharedWithMe(@Auth() auth: AuthDto): Promise<SharedLibraryResponseDto[]> {
+    return this.service.getSharedWithMe(auth);
   }
 
   @Get(':id')
@@ -121,5 +148,52 @@ export class LibraryController {
   })
   scanLibrary(@Param() { id }: UUIDParamDto): Promise<void> {
     return this.service.queueScan(id);
+  }
+
+  @Put(':id/users')
+  @Authenticated({ permission: Permission.LibraryShare })
+  @Endpoint({
+    summary: 'Share a library',
+    description: 'Add users to an external library as a Viewer or Editor. Owner (or admin) only.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  addLibraryUsers(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Body() dto: LibraryUsersDto,
+  ): Promise<LibraryUserResponseDto[]> {
+    return this.service.addUsers(auth, id, dto);
+  }
+
+  @Put(':id/users/:userId')
+  @Authenticated({ permission: Permission.LibraryShare })
+  @Endpoint({
+    summary: "Update a library user's role",
+    description: 'Change a shared user between Viewer and Editor. Owner (or admin) only.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  updateLibraryUser(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Param('userId', new ParseMeUUIDPipe({ version: '4' })) userId: string,
+    @Body() dto: LibraryUserUpdateDto,
+  ): Promise<LibraryUserResponseDto> {
+    return this.service.updateUserRole(auth, id, userId, dto);
+  }
+
+  @Delete(':id/users/:userId')
+  @Authenticated({ permission: Permission.LibraryShare })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Endpoint({
+    summary: 'Remove a library user',
+    description: 'Remove a shared user from the library. Use an ID of "me" to leave a shared library.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  removeLibraryUser(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Param('userId', new ParseMeUUIDPipe({ version: '4' })) userId: string,
+  ): Promise<void> {
+    return this.service.removeUser(auth, id, userId);
   }
 }

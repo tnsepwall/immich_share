@@ -160,6 +160,8 @@ export type AssetMapOptions = {
   stripMetadata?: boolean;
   withStack?: boolean;
   auth?: AuthDto;
+  /** Caller-verified: entity.livePhotoVideoId is in the same shared library as entity (else it gets redacted). */
+  sameLibraryLivePhoto?: boolean;
 };
 
 const peopleFromFaces = (faces?: MaybeDehydrated<AssetFace>[]): PersonResponseDto[] => {
@@ -191,7 +193,11 @@ const mapStack = (entity: { stack?: Stack | null }) => {
 };
 
 export function mapAsset(entity: MaybeDehydrated<MapAsset>, options: AssetMapOptions = {}): AssetResponseDto {
-  const { stripMetadata = false, withStack = false } = options;
+  const { stripMetadata = false, withStack = false, auth } = options;
+
+  // Non-owner viewer of a library asset: never leak filesystem paths; stacks are owner-only in v1.
+  const isSharedLibraryRecipient =
+    !!entity.libraryId && !!auth && auth.user.id !== entity.ownerId && !auth.user.isAdmin;
 
   if (stripMetadata) {
     const sanitizedAssetResponse: SanitizedAssetResponseDto = {
@@ -216,7 +222,7 @@ export function mapAsset(entity: MaybeDehydrated<MapAsset>, options: AssetMapOpt
     owner: entity.owner ? mapUser(entity.owner) : undefined,
     libraryId: entity.libraryId,
     type: entity.type,
-    originalPath: entity.originalPath,
+    originalPath: isSharedLibraryRecipient ? entity.originalFileName : entity.originalPath,
     originalFileName: entity.originalFileName,
     originalMimeType: mimeTypes.lookup(entity.originalFileName),
     thumbhash: entity.thumbhash ? hexOrBufferToBase64(entity.thumbhash) : null,
@@ -230,11 +236,12 @@ export function mapAsset(entity: MaybeDehydrated<MapAsset>, options: AssetMapOpt
     visibility: entity.visibility,
     duration: entity.duration,
     exifInfo: entity.exifInfo ? mapExif(entity.exifInfo) : undefined,
-    livePhotoVideoId: entity.livePhotoVideoId,
+    livePhotoVideoId:
+      isSharedLibraryRecipient && !options.sameLibraryLivePhoto ? null : entity.livePhotoVideoId,
     tags: entity.tags?.map((tag) => mapTag(tag)),
     people: peopleFromFaces(entity.faces),
     checksum: hexOrBufferToBase64(entity.checksum)!,
-    stack: withStack ? mapStack(entity) : undefined,
+    stack: isSharedLibraryRecipient ? null : withStack ? mapStack(entity) : undefined,
     isOffline: entity.isOffline,
     hasMetadata: true,
     duplicateId: entity.duplicateId,
