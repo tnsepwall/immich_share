@@ -118,4 +118,10 @@ export class AssetExifTable {
 
   @Column({ type: 'character varying', array: true, nullable: true })
   lockedProperties!: Array<LockableProperty> | null;
+
+  // Subset of lockedProperties still pending an XMP sidecar write. Split from lockedProperties so that a
+  // shared-library Editor's database-only curation (Phase 3) can lock a property forever without ever queuing
+  // a write to the owner's original files - see FEATURE-PLAN-shared-external-libraries.md Step 5b.
+  @Column({ type: 'character varying', array: true, nullable: true })
+  sidecarWriteProperties!: Array<LockableProperty> | null;
 }

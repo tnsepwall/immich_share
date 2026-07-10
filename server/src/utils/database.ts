@@ -568,9 +568,16 @@ export function vectorIndexQuery({ vectorExtension, table, indexName, lists }: V
   }
 }
 
-export const updateLockedColumns = <T extends Record<string, unknown> & { lockedProperties?: LockableProperty[] }>(
+export const updateLockedColumns = <
+  T extends Record<string, unknown> & { lockedProperties?: LockableProperty[]; sidecarWriteProperties?: LockableProperty[] },
+>(
   exif: T,
 ) => {
-  exif.lockedProperties = lockableProperties.filter((property) => property in exif);
+  const touched = lockableProperties.filter((property) => property in exif);
+  // Owner writes lock a property AND mark it pending an XMP sidecar write. The shared-library Editor's
+  // database-only primitive (library-editor.service.ts) does NOT go through this helper - it appends to
+  // lockedProperties only, so an editor-curated value is never written to the owner's original files.
+  exif.lockedProperties = touched;
+  exif.sidecarWriteProperties = touched;
   return exif;
 };

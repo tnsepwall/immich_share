@@ -188,7 +188,12 @@ describe(AssetService.name, () => {
 
       expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: asset.id, description: 'Test description', lockedProperties: ['description'] },
+          exif: {
+            assetId: asset.id,
+            description: 'Test description',
+            lockedProperties: ['description'],
+            sidecarWriteProperties: ['description'],
+          },
           lockedPropertiesBehavior: 'append',
         }),
       );
@@ -208,6 +213,7 @@ describe(AssetService.name, () => {
             assetId: asset.id,
             rating: 3,
             lockedProperties: ['rating'],
+            sidecarWriteProperties: ['rating'],
           },
           lockedPropertiesBehavior: 'append',
         }),

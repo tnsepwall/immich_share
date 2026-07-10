@@ -1,7 +1,14 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 import { Endpoint, HistoryBuilder } from 'src/decorators';
+import { AssetResponseDto } from 'src/dtos/asset-response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
+import {
+  LibraryAssetBulkUpdateDto,
+  LibraryAssetBulkUpdateParams,
+  LibraryAssetUpdateDto,
+  LibraryAssetUpdateParams,
+} from 'src/dtos/library-editor.dto';
 import {
   CreateLibraryDto,
   LibraryResponseDto,
@@ -16,13 +23,17 @@ import {
 } from 'src/dtos/library.dto';
 import { ApiTag, Permission } from 'src/enum';
 import { Auth, Authenticated } from 'src/middleware/auth.guard';
+import { LibraryEditorService } from 'src/services/library-editor.service';
 import { LibraryService } from 'src/services/library.service';
 import { ParseMeUUIDPipe, UUIDParamDto } from 'src/validation';
 
 @ApiTags(ApiTag.Libraries)
 @Controller('libraries')
 export class LibraryController {
-  constructor(private service: LibraryService) {}
+  constructor(
+    private service: LibraryService,
+    private editorService: LibraryEditorService,
+  ) {}
 
   @Get()
   @Authenticated({ permission: Permission.LibraryRead, admin: true })
@@ -195,5 +206,37 @@ export class LibraryController {
     @Param('userId', new ParseMeUUIDPipe({ version: '4' })) userId: string,
   ): Promise<void> {
     return this.service.removeUser(auth, id, userId);
+  }
+
+  @Patch(':libraryId/assets/:assetId')
+  @Authenticated({ permission: Permission.LibraryAssetUpdate })
+  @Endpoint({
+    summary: 'Update a library asset',
+    description:
+      'Update the allowlisted metadata (description, date/time, time zone, location, rating) of an asset in an external library. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  updateLibraryAsset(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId, assetId }: LibraryAssetUpdateParams,
+    @Body() dto: LibraryAssetUpdateDto,
+  ): Promise<AssetResponseDto> {
+    return this.editorService.updateAsset(auth, libraryId, assetId, dto);
+  }
+
+  @Patch(':libraryId/assets')
+  @Authenticated({ permission: Permission.LibraryAssetUpdate })
+  @Endpoint({
+    summary: 'Update library assets',
+    description:
+      'Update the allowlisted metadata (description, date/time, time zone, location, rating) of multiple assets in an external library atomically. Requires the library owner or the Editor role on the library share.',
+    history: new HistoryBuilder().added('v3'),
+  })
+  updateLibraryAssets(
+    @Auth() auth: AuthDto,
+    @Param() { libraryId }: LibraryAssetBulkUpdateParams,
+    @Body() dto: LibraryAssetBulkUpdateDto,
+  ): Promise<AssetResponseDto[]> {
+    return this.editorService.updateAssets(auth, libraryId, dto);
   }
 }

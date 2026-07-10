@@ -8,7 +8,7 @@ import { constants } from 'node:fs/promises';
 import { join, parse } from 'node:path';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { StorageCore } from 'src/cores/storage.core';
-import { Asset, AssetFile } from 'src/database';
+import { Asset, AssetFile, LockableProperty } from 'src/database';
 import { OnEvent, OnJob } from 'src/decorators';
 import {
   AssetFileType,
@@ -243,14 +243,16 @@ export class MetadataService extends BaseService {
       return;
     }
 
-    const [exifResult, stats] = await Promise.all([
+    const [exifResult, stats, lockedDates] = await Promise.all([
       this.getExifTags(asset),
       this.storageRepository.stat(asset.originalPath),
+      this.assetJobRepository.getLockedDatesForMetadataExtraction(asset.id),
     ]);
     const { tags: exifTags, audio, video, packets, format } = exifResult;
     this.logger.verbose('Exif Tags', exifTags);
 
     const dates = this.getDates(asset, exifTags, stats);
+    const timelineDates = this.resolveTimelineDates(dates, lockedDates);
 
     const { width, height } = this.getImageDimensions(exifTags);
     let geo: ReverseGeocodeResult = { country: null, state: null, city: null },
@@ -372,8 +374,8 @@ export class MetadataService extends BaseService {
         this.assetRepository.update({
           id: asset.id,
           duration: this.getDuration(exifTags),
-          localDateTime: dates.localDateTime,
-          fileCreatedAt: dates.dateTimeOriginal ?? undefined,
+          localDateTime: timelineDates.localDateTime,
+          fileCreatedAt: timelineDates.dateTimeOriginal ?? undefined,
           fileModifiedAt: stats.mtime,
 
           // Keep unedited assets in sync with the file on disk, but don't overwrite edited dimensions.
@@ -495,7 +497,7 @@ export class MetadataService extends BaseService {
       return JobStatus.Failed;
     }
 
-    const lockedProperties = await this.assetJobRepository.getLockedPropertiesForMetadataExtraction(id);
+    const sidecarWriteProperties = await this.assetJobRepository.getSidecarWriteProperties(id);
 
     const { sidecarFile } = getAssetFiles(asset.files);
     const sidecarPath = sidecarFile?.path || `${asset.originalPath}.xmp`;
@@ -510,7 +512,7 @@ export class MetadataService extends BaseService {
         tags: asset.exifInfo.tags,
         timeZone: asset.exifInfo.timeZone,
       },
-      lockedProperties,
+      sidecarWriteProperties,
     );
 
     const exif = _.omitBy(
@@ -536,7 +538,7 @@ export class MetadataService extends BaseService {
       await this.assetRepository.upsertFile({ assetId: id, type: AssetFileType.Sidecar, path: sidecarPath });
     }
 
-    await this.assetRepository.unlockProperties(asset.id, lockedProperties);
+    await this.assetRepository.unlockProperties(asset.id, sidecarWriteProperties);
 
     return JobStatus.Success;
   }
@@ -1051,6 +1053,36 @@ export class MetadataService extends BaseService {
       timeZone,
       localDateTime: localDateTime.toJSDate(),
       dateTimeOriginal: dateTimeOriginal.toJSDate(),
+    };
+  }
+
+  // If a shared-library Editor (or the owner) has locked dateTimeOriginal/timeZone via the database-only editor
+  // primitive, a later re-extraction must not let the file's own tags silently move the asset back to its
+  // original timeline bucket - only asset_exif is protected by lockedPropertiesBehavior: 'skip' below; without
+  // this, the unconditional assetRepository.update() a few lines down would still clobber asset.localDateTime/
+  // fileCreatedAt from the freshly re-parsed file tags. Re-derives from the already-curated DB values using the
+  // same instant -> zone -> "fake UTC" steps as getDates() above, instead of the file's tags.
+  private resolveTimelineDates(
+    dates: { dateTimeOriginal: Date; localDateTime: Date; timeZone: string | null },
+    locked?: { lockedProperties: LockableProperty[] | null; dateTimeOriginal: Date | null; timeZone: string | null },
+  ) {
+    const lockedProperties = locked?.lockedProperties ?? [];
+    if (!lockedProperties.includes('dateTimeOriginal') && !lockedProperties.includes('timeZone')) {
+      return dates;
+    }
+
+    const timeZone = (lockedProperties.includes('timeZone') ? locked?.timeZone : dates.timeZone) ?? 'UTC';
+    const storedInstant =
+      lockedProperties.includes('dateTimeOriginal') && locked?.dateTimeOriginal
+        ? DateTime.fromJSDate(locked.dateTimeOriginal)
+        : DateTime.fromJSDate(dates.dateTimeOriginal);
+    const dateTimeOriginal = storedInstant.setZone(timeZone);
+    const localDateTime = dateTimeOriginal.setZone('UTC', { keepLocalTime: true });
+
+    return {
+      timeZone,
+      dateTimeOriginal: dateTimeOriginal.toJSDate(),
+      localDateTime: localDateTime.toJSDate(),
     };
   }
 

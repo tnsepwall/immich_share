@@ -155,14 +155,28 @@ export class AssetJobRepository {
       .executeTakeFirst();
   }
 
+  // Used by handleSidecarWrite to decide which properties are still pending an XMP write - NOT lockedProperties,
+  // which now only means "protected from extraction overwrite" (Step 5b's column split).
   @GenerateSql({ params: [DummyValue.UUID] })
-  async getLockedPropertiesForMetadataExtraction(assetId: string) {
+  async getSidecarWriteProperties(assetId: string) {
     return this.db
       .selectFrom('asset_exif')
-      .select('asset_exif.lockedProperties')
+      .select('asset_exif.sidecarWriteProperties')
       .where('asset_exif.assetId', '=', assetId)
       .executeTakeFirst()
-      .then((row) => row?.lockedProperties ?? []);
+      .then((row) => row?.sidecarWriteProperties ?? []);
+  }
+
+  // Used by handleMetadataExtraction to decide whether asset.localDateTime/fileCreatedAt should be derived from
+  // these already-curated asset_exif values instead of the freshly re-parsed file tags - see the "extraction
+  // preserves locked dates across rescan" fix in FEATURE-PLAN-shared-external-libraries.md Step 5b.
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getLockedDatesForMetadataExtraction(assetId: string) {
+    return this.db
+      .selectFrom('asset_exif')
+      .select(['lockedProperties', 'dateTimeOriginal', 'timeZone'])
+      .where('asset_exif.assetId', '=', assetId)
+      .executeTakeFirst();
   }
 
   @GenerateSql({ params: [DummyValue.UUID, AssetFileType.Thumbnail] })

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Kysely, NotNull, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators';
-import { AlbumUserRole, AssetVisibility } from 'src/enum';
+import { AlbumUserRole, AssetVisibility, LibraryUserRole } from 'src/enum';
 import { DB } from 'src/schema';
 import { asUuid, withAlbumAssetProvenance } from 'src/utils/database';
 
@@ -180,6 +180,30 @@ class AssetAccess {
       });
   }
 
+  /**
+   * Scope check only, not an authorization check: confirms the assets are genuinely in-scope for the
+   * exact route library (curation authorization is checked separately via LibraryAccess.checkEditorAccess).
+   * Keeping the library id in this query prevents an editor of library A from sending asset ids through a
+   * route for library B.
+   */
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkLibraryAssetScope(libraryId: string, assetIds: Set<string>) {
+    if (assetIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('asset')
+      .select('asset.id')
+      .where('asset.libraryId', '=', libraryId)
+      .where('asset.deletedAt', 'is', null)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.id', 'in', [...assetIds])
+      .execute()
+      .then((assets) => new Set(assets.map((asset) => asset.id)));
+  }
+
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
   async checkOwnerAccess(userId: string, assetIds: Set<string>, hasElevatedPermission: boolean | undefined) {
@@ -284,51 +308,55 @@ class AssetAccess {
       return new Set<string>();
     }
 
-    return this.db
-      .selectFrom('shared_link')
-      .leftJoin('album', (join) => join.onRef('album.id', '=', 'shared_link.albumId').on('album.deletedAt', 'is', null))
-      .leftJoin('shared_link_asset', 'shared_link_asset.sharedLinkId', 'shared_link.id')
-      .leftJoin('asset', (join) =>
-        join.onRef('asset.id', '=', 'shared_link_asset.assetId').on('asset.deletedAt', 'is', null),
-      )
-      .leftJoin('album_asset', 'album_asset.albumId', 'album.id')
-      .leftJoin('asset as albumAssets', (join) =>
-        join.onRef('albumAssets.id', '=', 'album_asset.assetId').on('albumAssets.deletedAt', 'is', null),
-      )
-      .select([
-        'asset.id as assetId',
-        'asset.livePhotoVideoId as assetLivePhotoVideoId',
-        'albumAssets.id as albumAssetId',
-        'albumAssets.livePhotoVideoId as albumAssetLivePhotoVideoId',
-      ])
-      .where('shared_link.id', '=', sharedLinkId)
-      // Anonymous visitor: only ordinary (non-provenance) album_asset rows grant access, as defense in depth
-      // alongside the write-time guards that keep a provenance row and a shared link mutually exclusive.
-      .where(withAlbumAssetProvenance(null))
-      .where(
-        sql`array["asset"."id", "asset"."livePhotoVideoId", "albumAssets"."id", "albumAssets"."livePhotoVideoId"]`,
-        '&&',
-        sql`array[${sql.join([...assetIds])}]::uuid[] `,
-      )
-      .execute()
-      .then((rows) => {
-        const allowedIds = new Set<string>();
-        for (const row of rows) {
-          if (row.assetId && assetIds.has(row.assetId)) {
-            allowedIds.add(row.assetId);
+    return (
+      this.db
+        .selectFrom('shared_link')
+        .leftJoin('album', (join) =>
+          join.onRef('album.id', '=', 'shared_link.albumId').on('album.deletedAt', 'is', null),
+        )
+        .leftJoin('shared_link_asset', 'shared_link_asset.sharedLinkId', 'shared_link.id')
+        .leftJoin('asset', (join) =>
+          join.onRef('asset.id', '=', 'shared_link_asset.assetId').on('asset.deletedAt', 'is', null),
+        )
+        .leftJoin('album_asset', 'album_asset.albumId', 'album.id')
+        .leftJoin('asset as albumAssets', (join) =>
+          join.onRef('albumAssets.id', '=', 'album_asset.assetId').on('albumAssets.deletedAt', 'is', null),
+        )
+        .select([
+          'asset.id as assetId',
+          'asset.livePhotoVideoId as assetLivePhotoVideoId',
+          'albumAssets.id as albumAssetId',
+          'albumAssets.livePhotoVideoId as albumAssetLivePhotoVideoId',
+        ])
+        .where('shared_link.id', '=', sharedLinkId)
+        // Anonymous visitor: only ordinary (non-provenance) album_asset rows grant access, as defense in depth
+        // alongside the write-time guards that keep a provenance row and a shared link mutually exclusive.
+        .where(withAlbumAssetProvenance(null))
+        .where(
+          sql`array["asset"."id", "asset"."livePhotoVideoId", "albumAssets"."id", "albumAssets"."livePhotoVideoId"]`,
+          '&&',
+          sql`array[${sql.join([...assetIds])}]::uuid[] `,
+        )
+        .execute()
+        .then((rows) => {
+          const allowedIds = new Set<string>();
+          for (const row of rows) {
+            if (row.assetId && assetIds.has(row.assetId)) {
+              allowedIds.add(row.assetId);
+            }
+            if (row.assetLivePhotoVideoId && assetIds.has(row.assetLivePhotoVideoId)) {
+              allowedIds.add(row.assetLivePhotoVideoId);
+            }
+            if (row.albumAssetId && assetIds.has(row.albumAssetId)) {
+              allowedIds.add(row.albumAssetId);
+            }
+            if (row.albumAssetLivePhotoVideoId && assetIds.has(row.albumAssetLivePhotoVideoId)) {
+              allowedIds.add(row.albumAssetLivePhotoVideoId);
+            }
           }
-          if (row.assetLivePhotoVideoId && assetIds.has(row.assetLivePhotoVideoId)) {
-            allowedIds.add(row.assetLivePhotoVideoId);
-          }
-          if (row.albumAssetId && assetIds.has(row.albumAssetId)) {
-            allowedIds.add(row.albumAssetId);
-          }
-          if (row.albumAssetLivePhotoVideoId && assetIds.has(row.albumAssetLivePhotoVideoId)) {
-            allowedIds.add(row.albumAssetLivePhotoVideoId);
-          }
-        }
-        return allowedIds;
-      });
+          return allowedIds;
+        })
+    );
   }
 }
 
@@ -455,6 +483,29 @@ class TimelineAccess {
 
 class LibraryAccess {
   constructor(private db: Kysely<DB>) {}
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkEditorAccess(userId: string, libraryIds: Set<string>) {
+    if (libraryIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select('library.id')
+      .where('library_user.libraryId', 'in', [...libraryIds])
+      .where('library_user.userId', '=', userId)
+      .where('library_user.role', '=', sql.lit(LibraryUserRole.Editor))
+      .execute()
+      .then((libraries) => new Set(libraries.map((library) => library.id)));
+  }
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
