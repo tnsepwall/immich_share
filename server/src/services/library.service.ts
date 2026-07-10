@@ -283,7 +283,11 @@ export class LibraryService extends BaseService {
 
     const sharedUsers = await this.libraryRepository.getSharedUsers(id);
     const user = sharedUsers.find((share) => share.userId === userId);
-    return mapLibraryUser(user!);
+    if (!user) {
+      throw new BadRequestException('Library is not shared with user');
+    }
+
+    return mapLibraryUser(user);
   }
 
   async removeUser(auth: AuthDto, id: string, userId: string | 'me'): Promise<void> {
