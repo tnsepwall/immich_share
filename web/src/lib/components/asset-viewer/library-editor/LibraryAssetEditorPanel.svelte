@@ -5,17 +5,16 @@
   // DetailPanelLocation (never alongside them - see DetailPanel.svelte's `isLibraryEditor` branch),
   // and routes every write through the library-scoped `updateLibraryAsset` endpoint, never the
   // owner-only `updateAsset`.
-  import GeolocationPointPickerModal from '$lib/modals/GeolocationPointPickerModal.svelte';
-  import LibraryAssetChangeDateModal from '$lib/modals/LibraryAssetChangeDateModal.svelte';
-  import { updateLibraryAsset } from '$lib/api/library-share';
-  import { eventManager } from '$lib/managers/event-manager.svelte';
   import { shortcut } from '$lib/actions/shortcut';
   import StarRating, { type Rating } from '$lib/elements/StarRating.svelte';
+  import GeolocationPointPickerModal from '$lib/modals/GeolocationPointPickerModal.svelte';
+  import LibraryAssetChangeDateModal from '$lib/modals/LibraryAssetChangeDateModal.svelte';
+  import { eventManager } from '$lib/managers/event-manager.svelte';
   import { locale } from '$lib/stores/preferences.store';
   import { handlePromiseError } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
   import { fromISODateTime, fromISODateTimeUTC } from '$lib/utils/timeline-util';
-  import { getAssetInfo, type AssetResponseDto } from '@immich/sdk';
+  import { getAssetInfo, updateLibraryAsset, type AssetResponseDto } from '@immich/sdk';
   import { Icon, modalManager, Textarea, toastManager } from '@immich/ui';
   import { mdiCalendar, mdiMapMarkerOutline, mdiPencil } from '@mdi/js';
   import { t } from 'svelte-i18n';

@@ -1,6 +1,5 @@
+import { getLibrariesSharedWithMe, getMyLibraries } from '@immich/sdk';
 import { error } from '@sveltejs/kit';
-// TEMPORARY: shared-library endpoints aren't in the generated SDK yet - see web/src/lib/api/library-share.ts.
-import { getLibrariesSharedWithMe, getMyLibraries } from '$lib/api/library-share';
 import { authenticate } from '$lib/utils/auth';
 import type { LibraryViewerRole } from '$lib/utils/library-share-context';
 import type { PageLoad } from './$types';

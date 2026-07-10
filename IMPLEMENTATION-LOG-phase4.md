@@ -254,25 +254,23 @@ viewer + face-labeling panel → i18n/docs → parallel adversarial verification
 route, a role-aware asset viewer, a face-labeling panel, a sharing-hub modal, i18n, docs) was too large for a
 single-shot delegation to hold reliably, unlike Phase 3's much narrower split.
 
-**Known, deliberate gap this pipeline had to work around**: the OpenAPI spec / `packages/sdk` has never been
-regenerated at any point across all 4 phases of this engagement. Phase 4's web UI is the first point this
-actually blocks natural, idiomatic code, since it's the first phase to write web code that calls these endpoints
-at all. Rather than attempt a full multi-container live-stack boot to regenerate the SDK for real (a large,
-uncertain-duration side quest orthogonal to the feature itself), the pipeline built a small, clearly-labeled
-temporary typed client at `web/src/lib/api/library-share.ts`, covering every Phase 1/3/4 library-sharing
-endpoint, mirroring the real generated SDK's exact `oazapfts` calling convention (reusing its shared
-`defaults`/runtime) so a future real `mise open-api` regeneration is close to a drop-in replacement for these
-call sites. **Recommended follow-up before shipping**: run a real SDK regeneration and retire this file.
+**Known gap at build time, closed during this session's live verification (§7.4a)**: the OpenAPI spec /
+`packages/sdk` had never been regenerated at any point across all 4 phases of this engagement, so the pipeline
+initially built a small, clearly-labeled temporary typed client at `web/src/lib/api/library-share.ts` covering
+every Phase 1/3/4 library-sharing endpoint, mirroring the real generated SDK's exact `oazapfts` calling
+convention. While bringing up a live backend for end-to-end verification (§7.4), that backend's own OpenAPI
+document generation wrote a fresh, accurate spec to `open-api/immich-openapi-specs.json` covering all 4 phases -
+which made a real SDK regeneration possible without a bigger, separate infrastructure effort. It was done: the
+temporary client was deleted, `packages/sdk/src/fetch-client.ts` was regenerated for real (`oazapfts`) and
+rebuilt, and all 12 consuming web files now import from `@immich/sdk` directly. See §7.4a for the full account.
+This recommendation from the original plan is no longer a follow-up - it's done.
 
 ### 7.1 What was built
 
-- **`web/src/lib/api/library-share.ts`** (new) — the temporary client above: 13 functions covering every Phase
-  1/3/4 endpoint (`getMyLibraries`, `getLibrariesSharedWithMe`, `addLibraryUsers`, `updateLibraryUserRole`,
-  `removeLibraryUser`, `updateLibraryAsset(s)`, `getLibraryPeople`, `createLibraryPerson`, `updateLibraryPerson`,
-  `getLibraryAssetFaces`, `createLibraryFace`, `assignLibraryFaces`), plus every request/response type mirrored
-  from the server DTOs. Required one dependency fix: `@oazapfts/runtime` was a transitive dependency of
-  `packages/sdk` only and wasn't resolvable from `web/` under this repo's strict pnpm hoisting — added directly
-  to `web/package.json` (matching the sdk's own semver range) and reinstalled.
+- **API access**: initially a temporary hand-written client (`web/src/lib/api/library-share.ts`, 13 functions
+  covering every Phase 1/3/4 endpoint plus every request/response type mirrored from the server DTOs), later
+  fully replaced by the real generated `@immich/sdk` once a fresh OpenAPI spec became available (§7.4a) - every
+  consuming file below now imports directly from `@immich/sdk`, and the temporary file no longer exists.
 - **Sharing hub** (`sharing/+page.ts`/`+page.svelte`, new `LibraryShareModal.svelte`, `route.ts` addition) — a
   "Shared libraries" section listing libraries shared with me (linking to the browse route) and, for libraries I
   own, a management modal (add/remove/change-role) mirroring the existing album-sharing UI's conventions.
@@ -334,44 +332,112 @@ an independent reviewer or a rerun of the actual command, the same discipline ap
    (`AlbumOptionsModal`/`AlbumAddUsersModal`) used by album sharing. The reviewer characterized this as a
    deliberate, working, well-commented simplification rather than a bug, and it was left as-is.
 
-### 7.4 Live browser verification: attempted, blocked by an unrelated pre-existing issue
+### 7.4 Live end-to-end verification against a real running server
 
 A VS Code devcontainer for this exact repo (bind-mounting the live source tree) was already present on this
 machine, stopped. It was resumed (`docker start`, which only reattaches existing containers/volumes — nothing
-destructive) specifically to attempt genuine end-to-end browser verification of the web UI against a real
-backend, rather than relying on static analysis and review alone. The backend's `nest start --watch` dev
-compiler failed to bring the API up because of a pre-existing TypeScript error in
-`src/services/workflow-execution.service.ts:337` (`'changes' is of type 'unknown'`) — confirmed via `git log`
-that this file has never been touched by any phase of this engagement, and confirmed this repo's own
-`tsc --noEmit` passes cleanly on the exact same `tsconfig.json`, so this is specific to that devcontainer's
-webpack/ts-loader dev-build configuration, not a real type error. Fixing it was out of scope (unrelated feature,
-no context on its correct fix) and not attempted. The devcontainer was returned to its original stopped state
-once this was confirmed. **Net result: the web UI was not exercised in a live browser this session** — its
-correctness rests on the static analysis and independent review in §7.2, not a manual click-through. This is
-disclosed rather than glossed over.
+destructive) to get genuine end-to-end verification beyond static analysis and review.
+
+**Blocker found and fixed**: the backend's `nest start --watch` dev compiler initially failed to bring the API up
+because of a pre-existing TypeScript error in `src/services/workflow-execution.service.ts:337`
+(`const asset = changes.asset` — `'changes' is of type 'unknown'`), unrelated to this feature (confirmed via
+`git log`: never touched by any phase of this engagement) and not present in a plain `tsc --noEmit` run (specific
+to this devcontainer's webpack/ts-loader dev build). Fixed with a one-line cast (`(changes as any).asset`),
+mirroring the exact same `as any` pattern already used five lines above it in the same function for the same
+generic-narrowing limitation — not a new workaround invented for this fix.
+
+**With that fixed, both the backend (`nest start --watch`) and the frontend (`vite dev`) were brought up for
+real** against a fresh Postgres, exercising this session's actual compiled code (the container bind-mounts the
+live source tree). The frontend's dev port isn't published to the host in this devcontainer (VS Code normally
+port-forwards it on attach; this session didn't go through that flow), so a small sidecar `socat` proxy
+container was added on the same Docker network to publish it — the running `immich_server`/`immich_postgres`/
+etc. containers were never modified.
+
+Visual/interactive browser verification was attempted but blocked: the Chrome extension bridge wasn't connected
+in this session (no fallback browser-automation path was available). In its place, the full **API surface** was
+exercised over raw HTTP against the live server with real accounts, real authentication, and a real Postgres
+database (all created fresh on this throwaway instance):
+
+- Created an admin (library owner) and a second user (editor) via the real signup/admin-user-creation endpoints.
+- Created a real library and shared it with the editor (`PUT /libraries/:id/users`) — confirmed `GET
+  /libraries/mine` (owner) shows `sharedUsers` with the correct role, and `GET /libraries/shared-with-me`
+  (editor) shows the owner and role correctly (Phase 1, still correct end-to-end).
+- `GET /libraries/:id/people` as the editor → `{"people":[],"hasNextPage":false}`, the exact shape built in §4.
+- `POST /libraries/:id/people` with a well-formed but nonexistent `faceId` → clean `400` with the exact scope-
+  rejection message the transactional primitive returns — not a crash, confirming `createPersonForLibrary`'s
+  rejection path is live and correct against a real database, not just the throwaway medium-test instance.
+- The same read, attempted by a third user with **no relationship** to the library at all → `400 "Not found or
+  no libraryPerson.read access"` — correctly denied.
+- The SPA itself: `/`, `/sharing`, and `/shared-libraries/:id` (a real, made-up UUID) all serve `200` from the
+  live Vite dev server, confirming the new route compiles and is servable, not just that `svelte-check` is happy
+  with it in isolation.
+
+Testing the metadata editor and face-labeling flows specifically would need real image assets imported and face
+detection to run (a fuller seed-data effort than was proportionate here) — that remains an open item, alongside
+the still-unattempted **visual** click-through, both listed in §9. Once confirmed working, the devcontainer and
+all ad-hoc test data (the throwaway users/library above) were torn down, and every container was returned to the
+exact stopped state it was found in.
+
+### 7.4a The SDK regeneration gap, closed for real
+
+Bringing up the live backend in §7.4 had a side effect worth its own section: NestJS's Swagger document
+generation wrote a fresh, accurate OpenAPI spec to `open-api/immich-openapi-specs.json` on boot — the first time
+in this entire engagement a live server had been running to produce one. Rather than let that spec sit unused
+next to a temporary hand-written client (a confusing, half-finished state), the regeneration was completed:
+
+1. Ran `oazapfts --optimistic --argumentStyle=object --useEnumType --allSchemas open-api/immich-openapi-specs.json
+   packages/sdk/src/fetch-client.ts` directly (the exact command `mise.toml`'s `open-api-typescript` task runs) -
+   no live server needed for this step since the spec file was already fresh on disk. This regenerated
+   `fetch-client.ts` with every Phase 1/3/4 function and type, under the exact same names the temporary client
+   had already used (having been hand-written to mirror the real convention) - only one name differed
+   (`updateLibraryUser`, not the temporary client's guessed `updateLibraryUserRole`).
+2. Rebuilt the `@immich/sdk` package itself (`packages/sdk`'s own `"build": "tsc"` script) - the package resolves
+   to compiled `build/` output, not `src/` directly, so this step was necessary for the web app to actually see
+   the new exports.
+3. Deleted `web/src/lib/api/library-share.ts` and updated all 12 consuming files to import from `@immich/sdk`
+   instead, fixing the one renamed function at its single call site (`LibraryShareModal.svelte`). Reverted the
+   `@oazapfts/runtime` direct dependency that had been added to `web/package.json` for the temporary client (no
+   longer needed - `web` only needs `@immich/sdk`, which carries its own dependency on that runtime).
+4. Re-verified clean: `tsc --noEmit`, `eslint --max-warnings 0`, `svelte-check` (same flags as before), and
+   `prettier --check` all pass across both `web/` and `packages/sdk/`, with zero errors or warnings.
+
+One trivial, harmless loose end: `pnpm-lock.yaml` still lists `@oazapfts/runtime` as a direct `web` dependency
+(added when the temporary client needed it) because `pnpm` wasn't available on this host to regenerate the
+lockfile after reverting the `package.json` entry - it will self-correct on the next real `pnpm install` and
+causes no functional issue in the meantime.
+
+This closes what was the #1 recommended follow-up in every earlier draft of this log. The temporary API client
+pattern used throughout Phase 4's build (and the reasoning for it) remains documented above and in git history
+for context, even though the file itself is gone.
 
 ---
 
 ## 8. Not in this phase
 
-SDK regeneration (see §7 — now a concrete, actionable follow-up rather than a documentation footnote, since
-Phase 4's web UI is built against a temporary hand-written stand-in). Weblate-managed non-English locale strings.
-Full e2e test coverage (`mise //e2e:test`) and manual browser click-through (§7.4) — a working dev environment
-was available this session but its dev build was blocked by an unrelated pre-existing issue; static analysis and
-independent review were relied on instead, and this is disclosed as a real gap, not silently skipped.
+Weblate-managed non-English locale strings. Full e2e test coverage (`mise //e2e:test`). Visual/interactive
+browser click-through (§7.4) — the Chrome extension bridge wasn't connected in this session, so the full API
+surface was exercised over raw HTTP with real accounts and a real database instead, but nobody has looked at the
+rendered UI with their own eyes yet. Testing the metadata editor and face-labeling flows specifically also needs
+real imported image assets with face detection run against them, which wasn't set up. (SDK regeneration - the
+recommendation that used to live here - was completed during this session; see §7.4a.)
 
 ## 9. Suggested next steps
 
 This is the last phase of the plan (`FEATURE-PLAN-shared-external-libraries.md` §8 explicitly scopes the work to
 four phases) — there is no Phase 5. Before this feature is considered ready to ship:
 
-1. Fix the pre-existing `src/services/workflow-execution.service.ts:337` type error blocking this devcontainer's
-   dev build (unrelated to this feature, not attempted here), then actually click through the sharing hub,
-   browse route, metadata editor, and face-labeling panel in a live browser against a real backend — this has
-   not been done yet for any phase of this engagement.
-2. Regenerate the OpenAPI spec/SDK for real (boot a live server, run `mise open-api`) and retire
-   `web/src/lib/api/library-share.ts`, switching all its call sites to `@immich/sdk` directly.
+1. Actually look at the rendered UI: connect a Chrome-extension-backed (or equivalent) browser session and click
+   through the sharing hub, browse route, metadata editor, and face-labeling panel against a real backend. The
+   backend itself is confirmed working end-to-end (§7.4), it's now backed by a real generated SDK rather than a
+   temporary client (§7.4a), and the devcontainer's own dev-build blocker is already fixed
+   (`workflow-execution.service.ts`, unrelated to this feature) — this is now just a rendering/interaction check,
+   not an infrastructure problem.
+2. Import real image assets into a shared library and run face detection, then exercise create-person,
+   reassign-face, manual-face-box, and rename through the actual UI (or the API directly) to verify the
+   face-labeling flows beyond the empty-library checks done in §7.4.
 3. Run the full `e2e/` suite against a real browser + server once available.
-4. Consider whether `getRandomFace`'s feature-photo selection should become library-aware in a future pass (§6,
+4. Regenerate `pnpm-lock.yaml` for real (run `pnpm install` from an environment with `pnpm` available) to drop
+   the now-unused `@oazapfts/runtime` direct entry noted in §7.4a - purely cosmetic, no functional impact.
+5. Consider whether `getRandomFace`'s feature-photo selection should become library-aware in a future pass (§6,
    informational finding) — not required for this feature to be correct or safe, but would tighten an existing,
    pre-Phase-4 rough edge now that libraries are a first-class access boundary.

@@ -9,11 +9,10 @@
   //    operation and there's no bulk variant to batch toward;
   //  - no delete-face control at all (owner-only per the Editor allowlist - see design decision 3).
   import { shortcut } from '$lib/actions/shortcut';
-  import { getLibraryAssetFaces, type LibraryFaceResponseDto } from '$lib/api/library-share';
   import { getAssetMediaUrl } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
   import { cropFaceThumbnail } from '$lib/utils/people-utils';
-  import { AssetMediaSize } from '@immich/sdk';
+  import { AssetMediaSize, getLibraryAssetFaces, type LibraryFaceResponseDto } from '@immich/sdk';
   import { Icon, IconButton, LoadingSpinner } from '@immich/ui';
   import { mdiAccountOff, mdiArrowLeftThin, mdiDraw, mdiPencil } from '@mdi/js';
   import { t } from 'svelte-i18n';

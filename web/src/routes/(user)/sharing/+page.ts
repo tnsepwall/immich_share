@@ -1,6 +1,4 @@
-import { PartnerDirection, getAllAlbums, getPartners } from '@immich/sdk';
-// TEMPORARY: shared-library endpoints aren't in the generated SDK yet - see web/src/lib/api/library-share.ts.
-import { getLibrariesSharedWithMe, getMyLibraries } from '$lib/api/library-share';
+import { PartnerDirection, getAllAlbums, getLibrariesSharedWithMe, getMyLibraries, getPartners } from '@immich/sdk';
 import { authenticate } from '$lib/utils/auth';
 import { getFormatter } from '$lib/utils/i18n';
 import type { PageLoad } from './$types';

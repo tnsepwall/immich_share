@@ -1,7 +1,5 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  // TEMPORARY: shared-library types aren't in the generated SDK yet - see web/src/lib/api/library-share.ts.
-  import type { SharedLibraryResponseDto } from '$lib/api/library-share';
   import ControlAppBar from '$lib/components/shared-components/ControlAppBar.svelte';
   import DownloadAction from '$lib/components/timeline/actions/DownloadAction.svelte';
   import AssetSelectControlBar from '$lib/components/timeline/AssetSelectControlBar.svelte';
@@ -12,7 +10,7 @@
   import { Route } from '$lib/route';
   import { getAssetBulkActions } from '$lib/services/asset.service';
   import type { LibraryShareContext } from '$lib/utils/library-share-context';
-  import { AssetVisibility } from '@immich/sdk';
+  import { AssetVisibility, type SharedLibraryResponseDto } from '@immich/sdk';
   import { ActionButton, CommandPaletteDefaultProvider, modalManager } from '@immich/ui';
   import { mdiArrowLeft } from '@mdi/js';
   import { t } from 'svelte-i18n';

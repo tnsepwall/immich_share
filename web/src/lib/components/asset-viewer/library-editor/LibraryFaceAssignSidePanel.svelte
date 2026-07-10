@@ -3,18 +3,19 @@
   // library face. Search/candidate list comes exclusively from `getLibraryPeople` (never the
   // owner's `getAllPeople`), so an Editor's "assign to person" picker only ever shows people
   // reachable through this library - see design decision 3's person-thumbnail/visibility rule.
-  import {
-    assignLibraryFaces,
-    createLibraryPerson,
-    getLibraryPeople,
-    updateLibraryPerson,
-  } from '$lib/api/library-share';
-  import type { LibraryFaceResponseDto, LibraryPersonResponseDto } from '$lib/api/library-share';
   import { getAssetMediaUrl } from '$lib/utils';
   import { handleError } from '$lib/utils/handle-error';
   import { cropFaceThumbnail } from '$lib/utils/people-utils';
   import { normalizeSearchString } from '$lib/utils/string-utils';
-  import { AssetMediaSize } from '@immich/sdk';
+  import {
+    assignLibraryFaces,
+    AssetMediaSize,
+    createLibraryPerson,
+    getLibraryPeople,
+    updateLibraryPerson,
+    type LibraryFaceResponseDto,
+    type LibraryPersonResponseDto,
+  } from '@immich/sdk';
   import { Button, IconButton, Input, LoadingSpinner } from '@immich/ui';
   import { mdiArrowLeftThin, mdiCheck, mdiPencil, mdiPlus } from '@mdi/js';
   import { t } from 'svelte-i18n';

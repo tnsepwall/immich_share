@@ -6,11 +6,15 @@
   // people list. Clicking the pencil opens LibraryFaceEditSidePanel for the actual face-labeling
   // interactions (reassign, create-and-assign, manual face box, rename).
   import ImageThumbnail from '$lib/components/assets/thumbnail/ImageThumbnail.svelte';
-  import { getLibraryAssetFaces, type LibraryFaceResponseDto } from '$lib/api/library-share';
   import { cropFaceThumbnail } from '$lib/utils/people-utils';
   import { handleError } from '$lib/utils/handle-error';
   import { getAssetMediaUrl } from '$lib/utils';
-  import { AssetMediaSize, type AssetResponseDto } from '@immich/sdk';
+  import {
+    AssetMediaSize,
+    getLibraryAssetFaces,
+    type AssetResponseDto,
+    type LibraryFaceResponseDto,
+  } from '@immich/sdk';
   import { IconButton, Text } from '@immich/ui';
   import { mdiPencil } from '@mdi/js';
   import { t } from 'svelte-i18n';

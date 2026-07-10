@@ -12,10 +12,10 @@
   //    PhotoViewer's own tracked dimensions), this component isn't mounted inside PhotoViewer, so
   //    it measures its own wrapping element via `bind:clientWidth`/`clientHeight` instead. It's
   //    rendered as a sibling overlay from AssetViewer.svelte, occupying the same content box.
-  import { createLibraryFace, getLibraryPeople, type LibraryPersonResponseDto } from '$lib/api/library-share';
   import { getNaturalSize, scaleToFit } from '$lib/utils/container-utils';
   import { handleError } from '$lib/utils/handle-error';
   import { normalizeSearchString } from '$lib/utils/string-utils';
+  import { createLibraryFace, getLibraryPeople, type LibraryPersonResponseDto } from '@immich/sdk';
   import { Button, Input, toastManager } from '@immich/ui';
   import { Canvas, InteractiveFabricObject, Rect } from 'fabric';
   import { clamp } from 'lodash-es';
