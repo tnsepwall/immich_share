@@ -47,6 +47,7 @@ import {
   withFacesAndPeople,
   withFilePath,
   withFiles,
+  withAlbumAssetProvenance,
   withLibrary,
   withOwner,
   withSmartSearch,
@@ -83,6 +84,8 @@ interface AssetBuilderOptions {
   isTrashed?: boolean;
   isDuplicate?: boolean;
   albumId?: string;
+  /** Requester identity for gating provenance-linked album_asset rows when albumId is set; null for shared-link visitors. */
+  requestedBy?: string | null;
   libraryId?: string;
   tagId?: string;
   personId?: string;
@@ -769,7 +772,8 @@ export class AssetRepository {
           .$if(!!options.albumId, (qb) =>
             qb
               .innerJoin('album_asset', 'asset.id', 'album_asset.assetId')
-              .where('album_asset.albumId', '=', asUuid(options.albumId!)),
+              .where('album_asset.albumId', '=', asUuid(options.albumId!))
+              .where(withAlbumAssetProvenance(options.requestedBy ?? null)),
           )
           .$if(!!options.personId, (qb) => hasPeople(qb, [options.personId!]))
           .$if(!!options.withStacked, (qb) =>
@@ -861,7 +865,8 @@ export class AssetRepository {
                 eb
                   .selectFrom('album_asset')
                   .whereRef('album_asset.assetId', '=', 'asset.id')
-                  .where('album_asset.albumId', '=', asUuid(options.albumId!)),
+                  .where('album_asset.albumId', '=', asUuid(options.albumId!))
+                  .where(withAlbumAssetProvenance(options.requestedBy ?? null)),
               ),
             ),
           )

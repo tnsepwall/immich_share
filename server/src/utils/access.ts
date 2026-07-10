@@ -273,6 +273,11 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.library.checkOwnerAccess(auth.user.id, ids);
     }
 
+    // uses asset ids; backs the provenance-aware album-insertion fallback only, never shared-link creation
+    case Permission.LibraryAssetAddToAlbum: {
+      return access.asset.checkSharedLibraryAlbumAddAccess(auth.user.id, ids);
+    }
+
     case Permission.NotificationRead:
     case Permission.NotificationUpdate:
     case Permission.NotificationDelete: {

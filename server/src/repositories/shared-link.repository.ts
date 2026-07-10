@@ -10,6 +10,7 @@ import { DB } from 'src/schema';
 import { AssetExifTable } from 'src/schema/tables/asset-exif.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
 import { SharedLinkTable } from 'src/schema/tables/shared-link.table';
+import { withAlbumAssetProvenance } from 'src/utils/database';
 
 export type SharedLinkSearchOptions = {
   userId: string;
@@ -80,6 +81,7 @@ export class SharedLinkRepository {
         (eb) =>
           withSharedLinkAlbum(eb)
             .leftJoin('album_asset', 'album_asset.albumId', 'album.id')
+            .where(withAlbumAssetProvenance(null))
             .leftJoinLateral(
               (eb) =>
                 eb

@@ -190,6 +190,8 @@ export enum Permission {
   LibraryStatistics = 'library.statistics',
   LibraryShare = 'library.share',
 
+  LibraryAssetAddToAlbum = 'libraryAsset.addToAlbum',
+
   TimelineRead = 'timeline.read',
   TimelineDownload = 'timeline.download',
 

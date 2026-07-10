@@ -94,6 +94,8 @@ export interface SearchTagOptions {
 
 export interface SearchAlbumOptions {
   albumIds?: string[];
+  /** Required (non-undefined) whenever albumIds is set: gates provenance-linked album_asset rows. Pass null for shared-link visitors. */
+  requestedBy?: string | null;
 }
 
 export interface SearchOrderOptions {

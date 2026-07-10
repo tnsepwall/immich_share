@@ -17,6 +17,7 @@ import { MapMarkerResponseDto } from 'src/dtos/map.dto';
 import { AlbumUserRole, Permission } from 'src/enum';
 import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository';
 import { BaseService } from 'src/services/base.service';
+import { isGranted } from 'src/utils/access';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
 import { asDateTimeString } from 'src/utils/date';
 import { getPreferences } from 'src/utils/preferences';
@@ -50,7 +51,10 @@ export class AlbumService extends BaseService {
 
     // Get asset count for each album. Then map the result to an object:
     // { [albumId]: assetCount }
-    const results = await this.albumRepository.getMetadataForIds(albums.map((album) => album.id));
+    const results = await this.albumRepository.getMetadataForIds(
+      albums.map((album) => album.id),
+      ownerId,
+    );
     const albumMetadata: Record<string, AlbumAssetCount> = {};
     for (const metadata of results) {
       albumMetadata[metadata.albumId] = metadata;
@@ -71,7 +75,8 @@ export class AlbumService extends BaseService {
     await this.requireAccess({ auth, permission: Permission.AlbumRead, ids: [id] });
     await this.albumRepository.updateThumbnails();
     const album = await this.findOrFail(id, auth.user.id, { withAssets: false });
-    const [albumMetadataForIds] = await this.albumRepository.getMetadataForIds([album.id]);
+    const requestedBy = auth.sharedLink ? null : auth.user.id;
+    const [albumMetadataForIds] = await this.albumRepository.getMetadataForIds([album.id], requestedBy);
 
     const hasSharedUsers = album.albumUsers && album.albumUsers.length > 1;
     const hasSharedLink = album.sharedLinks && album.sharedLinks.length > 0;
@@ -83,7 +88,7 @@ export class AlbumService extends BaseService {
       endDate: asDateTimeString(albumMetadataForIds?.endDate ?? undefined),
       assetCount: albumMetadataForIds?.assetCount ?? 0,
       lastModifiedAssetTimestamp: asDateTimeString(albumMetadataForIds?.lastModifiedAssetTimestamp ?? undefined),
-      contributorCounts: isShared ? await this.albumRepository.getContributorCounts(album.id) : undefined,
+      contributorCounts: isShared ? await this.albumRepository.getContributorCounts(album.id, requestedBy) : undefined,
     };
   }
 
@@ -94,7 +99,7 @@ export class AlbumService extends BaseService {
       return [];
     }
 
-    return this.mapRepository.getAlbumMapMarkers(id);
+    return this.mapRepository.getAlbumMapMarkers(id, auth.sharedLink ? null : auth.user.id);
   }
 
   async create(auth: AuthDto, dto: CreateAlbumDto): Promise<AlbumResponseDto> {
@@ -108,12 +113,17 @@ export class AlbumService extends BaseService {
       }
     }
 
-    const allowedAssetIdsSet = await this.checkAccess({
-      auth,
-      permission: Permission.AssetShare,
-      ids: dto.assetIds || [],
-    });
-    const assetIds = [...allowedAssetIdsSet].map((id) => id);
+    const requestedAssetIds = dto.assetIds || [];
+    const assetShareIds = await this.checkAccess({ auth, permission: Permission.AssetShare, ids: requestedAssetIds });
+    const remainingAssetIds = requestedAssetIds.filter((assetId) => !assetShareIds.has(assetId));
+    // A brand-new album is always owned by its creator, so a shared-library grant is always eligible here.
+    const libraryGrants =
+      remainingAssetIds.length > 0 ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds) : new Map<string, string>();
+
+    const assets: { assetId: string; sourceLibraryId: string | null }[] = [
+      ...[...assetShareIds].map((assetId) => ({ assetId, sourceLibraryId: null })),
+      ...[...libraryGrants].map(([assetId, sourceLibraryId]) => ({ assetId, sourceLibraryId })),
+    ];
 
     const userMetadata = await this.userRepository.getMetadata(auth.user.id);
 
@@ -121,10 +131,10 @@ export class AlbumService extends BaseService {
       {
         albumName: dto.albumName,
         description: dto.description,
-        albumThumbnailAssetId: assetIds[0] || null,
+        albumThumbnailAssetId: assets[0]?.assetId || null,
         order: getPreferences(userMetadata).albums.defaultAssetOrder,
       },
-      assetIds,
+      assets,
       [{ userId: auth.user.id, role: AlbumUserRole.Owner }, ...albumUsers],
       auth.user.id,
     );
@@ -178,6 +188,44 @@ export class AlbumService extends BaseService {
       { parentId: id, assetIds: dto.ids },
     );
 
+    // Precedence upgrade: an asset already in the album via a library grant, for which the requester now has
+    // genuine durable AssetShare access, gets upgraded to a durable (null-provenance) grant.
+    const duplicateIds = results
+      .filter(({ success, error }) => !success && error === BulkIdErrorReason.DUPLICATE)
+      .map(({ id }) => id);
+    if (duplicateIds.length > 0) {
+      const hasAssetShare = await this.checkAccess({ auth, permission: Permission.AssetShare, ids: duplicateIds });
+      if (hasAssetShare.size > 0) {
+        await this.albumRepository.upgradeProvenanceGrants(id, [...hasAssetShare]);
+      }
+    }
+
+    // Library-grant fallback: assets that failed even AssetShare may still be insertable via a shared-library
+    // grant, but only into an album the requester OWNS (being an Editor is insufficient), and never into an
+    // album that already has a shared link.
+    const deniedIds = results
+      .filter(({ success, error }) => !success && error === BulkIdErrorReason.NO_PERMISSION)
+      .map(({ id }) => id);
+    if (deniedIds.length > 0) {
+      const isOwner = await this.accessRepository.album.checkOwnerAccess(auth.user.id, new Set([id]));
+      const hasSharedLink = (album.sharedLinks?.length ?? 0) > 0;
+      if (isOwner.has(id) && !hasSharedLink) {
+        const libraryGrants = await this.resolveLibraryAlbumGrants(auth, deniedIds);
+        if (libraryGrants.size > 0) {
+          await this.albumRepository.addLibraryAssetIds(
+            id,
+            [...libraryGrants].map(([assetId, sourceLibraryId]) => ({ assetId, sourceLibraryId })),
+          );
+          for (const assetId of libraryGrants.keys()) {
+            const index = results.findIndex((result) => result.id === assetId);
+            if (index !== -1) {
+              results[index] = { id: assetId, success: true };
+            }
+          }
+        }
+      }
+    }
+
     const { id: firstNewAssetId } = results.find(({ success }) => success) || {};
     if (firstNewAssetId) {
       await this.albumRepository.update(
@@ -216,26 +264,61 @@ export class AlbumService extends BaseService {
       return results;
     }
 
-    const allowedAssetIds = await this.checkAccess({ auth, permission: Permission.AssetShare, ids: dto.assetIds });
-    if (allowedAssetIds.size === 0) {
+    const assetShareIds = await this.checkAccess({ auth, permission: Permission.AssetShare, ids: dto.assetIds });
+    const remainingAssetIds = dto.assetIds.filter((assetId) => !assetShareIds.has(assetId));
+    const libraryGrants =
+      remainingAssetIds.length > 0 ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds) : new Map<string, string>();
+
+    if (assetShareIds.size === 0 && libraryGrants.size === 0) {
       results.error = BulkIdErrorReason.NO_PERMISSION;
       return results;
     }
 
+    // Library grants may only land in albums the requester OWNS (being an Editor is insufficient).
+    const ownedAlbumIds =
+      libraryGrants.size > 0
+        ? await this.accessRepository.album.checkOwnerAccess(auth.user.id, allowedAlbumIds)
+        : new Set<string>();
+
     const albumAssetValues: { albumId: string; assetId: string }[] = [];
+    const libraryAlbumAssetValues: { albumId: string; assetId: string; sourceLibraryId: string }[] = [];
     const events: { id: string; recipients: string[] }[] = [];
     for (const albumId of allowedAlbumIds) {
-      const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...allowedAssetIds]);
-      const notPresentAssetIds = [...allowedAssetIds].filter((id) => !existingAssetIds.has(id));
+      const album = await this.findOrFail(albumId, auth.user.id, { withAssets: false });
+      const hasSharedLink = (album.sharedLinks?.length ?? 0) > 0;
+      const canUseLibraryGrants = ownedAlbumIds.has(albumId) && !hasSharedLink;
+
+      const candidateAssetIds = new Set([...assetShareIds, ...(canUseLibraryGrants ? libraryGrants.keys() : [])]);
+      if (candidateAssetIds.size === 0) {
+        continue;
+      }
+
+      const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...candidateAssetIds]);
+      const notPresentAssetIds = [...candidateAssetIds].filter((assetId) => !existingAssetIds.has(assetId));
+
+      // Precedence upgrade: an asset already in this album via a library grant, for which the requester now has
+      // genuine durable AssetShare access, gets upgraded to a durable (null-provenance) grant.
+      const alreadyPresentDurableCandidates = [...assetShareIds].filter((assetId) => existingAssetIds.has(assetId));
+      if (alreadyPresentDurableCandidates.length > 0) {
+        await this.albumRepository.upgradeProvenanceGrants(albumId, alreadyPresentDurableCandidates);
+      }
+
       if (notPresentAssetIds.length === 0) {
         continue;
       }
-      const album = await this.findOrFail(albumId, auth.user.id, { withAssets: false });
+
       results.error = undefined;
       results.success = true;
 
       for (const assetId of notPresentAssetIds) {
-        albumAssetValues.push({ albumId, assetId });
+        if (assetShareIds.has(assetId)) {
+          albumAssetValues.push({ albumId, assetId });
+        } else {
+          const sourceLibraryId = libraryGrants.get(assetId);
+          if (sourceLibraryId) {
+            libraryAlbumAssetValues.push({ albumId, assetId, sourceLibraryId });
+          }
+        }
       }
       await this.albumRepository.update(
         albumId,
@@ -250,7 +333,12 @@ export class AlbumService extends BaseService {
       events.push({ id: albumId, recipients: allUsersExceptUs });
     }
 
-    await this.albumRepository.addAssetIdsToAlbums(albumAssetValues);
+    if (albumAssetValues.length > 0) {
+      await this.albumRepository.addAssetIdsToAlbums(albumAssetValues);
+    }
+    if (libraryAlbumAssetValues.length > 0) {
+      await this.albumRepository.addLibraryAssetIdsToAlbums(libraryAlbumAssetValues);
+    }
     for (const event of events) {
       for (const recipientId of event.recipients) {
         await this.eventRepository.emit('AlbumUpdate', { id: event.id, recipientId });
@@ -336,6 +424,36 @@ export class AlbumService extends BaseService {
   async updateUser(auth: AuthDto, id: string, userId: string, dto: UpdateAlbumUserDto): Promise<void> {
     await this.requireAccess({ auth, permission: Permission.AlbumShare, ids: [id] });
     await this.albumUserRepository.update({ albumId: id, userId }, { role: dto.role });
+  }
+
+  /**
+   * Resolves which of the given asset ids may be added to one of the requester's own albums via a shared-library
+   * grant (never a shared-link fallback), mapped to the exact library each came from. An API key must hold
+   * `LibraryAssetAddToAlbum` explicitly — `AlbumAssetCreate` alone does not grant this fallback.
+   */
+  private async resolveLibraryAlbumGrants(auth: AuthDto, assetIds: string[]): Promise<Map<string, string>> {
+    const grants = new Map<string, string>();
+    if (assetIds.length === 0) {
+      return grants;
+    }
+
+    if (auth.apiKey && !isGranted({ requested: [Permission.LibraryAssetAddToAlbum], current: auth.apiKey.permissions })) {
+      return grants;
+    }
+
+    const allowedIds = await this.checkAccess({ auth, permission: Permission.LibraryAssetAddToAlbum, ids: assetIds });
+    if (allowedIds.size === 0) {
+      return grants;
+    }
+
+    const assets = await this.assetRepository.getByIds([...allowedIds]);
+    for (const asset of assets) {
+      if (allowedIds.has(asset.id) && asset.libraryId) {
+        grants.set(asset.id, asset.libraryId);
+      }
+    }
+
+    return grants;
   }
 
   private async findOrFail(id: string, authUserId: string, options: AlbumInfoOptions) {

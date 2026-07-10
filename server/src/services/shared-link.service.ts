@@ -72,6 +72,9 @@ export class SharedLinkService extends BaseService {
           throw new BadRequestException('Invalid albumId');
         }
         await this.requireAccess({ auth, permission: Permission.AlbumShare, ids: [dto.albumId] });
+        if (await this.albumRepository.hasProvenanceAssets(dto.albumId)) {
+          throw new BadRequestException('Cannot create a shared link for an album containing shared-library assets');
+        }
         break;
       }
 

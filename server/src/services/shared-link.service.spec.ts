@@ -161,6 +161,19 @@ describe(SharedLinkService.name, () => {
       });
     });
 
+    it('should not allow a shared link on an album containing shared-library assets', async () => {
+      const album = AlbumFactory.from().asset().build();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.album.hasProvenanceAssets.mockResolvedValue(true);
+
+      await expect(
+        sut.create(authStub.admin, { type: SharedLinkType.Album, albumId: album.id }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.album.hasProvenanceAssets).toHaveBeenCalledWith(album.id);
+      expect(mocks.sharedLink.create).not.toHaveBeenCalled();
+    });
+
     it('should create an individual shared link', async () => {
       const asset = AssetFactory.create();
       const sharedLink = SharedLinkFactory.from()
