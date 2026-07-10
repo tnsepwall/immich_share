@@ -665,6 +665,7 @@ describe(LibraryService.name, () => {
       const library = factory.library();
 
       mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
 
       await expect(sut.get(library.id)).resolves.toEqual(
         expect.objectContaining({
@@ -675,6 +676,21 @@ describe(LibraryService.name, () => {
       );
 
       expect(mocks.library.get).toHaveBeenCalledWith(library.id);
+    });
+
+    it('should attach shared users', async () => {
+      const library = factory.library();
+      const viewer = UserFactory.create();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: viewer.id, user: getDehydrated(viewer), role: LibraryUserRole.Viewer }),
+      ]);
+
+      const result = await sut.get(library.id);
+
+      expect(mocks.library.getSharedUsers).toHaveBeenCalledWith(library.id);
+      expect(result.sharedUsers).toEqual([{ user: expect.objectContaining({ id: viewer.id }), role: 'viewer' }]);
     });
 
     it('should throw an error when a library is not found', async () => {
@@ -842,8 +858,24 @@ describe(LibraryService.name, () => {
       const library = factory.library();
 
       mocks.library.getAll.mockResolvedValue([library]);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
 
       await expect(sut.getAll()).resolves.toEqual([expect.objectContaining({ id: library.id })]);
+    });
+
+    it('should attach shared users to each library', async () => {
+      const library = factory.library();
+      const editor = UserFactory.create();
+
+      mocks.library.getAll.mockResolvedValue([library]);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({ libraryId: library.id, userId: editor.id, user: getDehydrated(editor), role: LibraryUserRole.Editor }),
+      ]);
+
+      const result = await sut.getAll();
+
+      expect(mocks.library.getSharedUsers).toHaveBeenCalledWith(library.id);
+      expect(result[0].sharedUsers).toEqual([{ user: expect.objectContaining({ id: editor.id }), role: 'editor' }]);
     });
   });
 
