@@ -401,10 +401,20 @@ next to a temporary hand-written client (a confusing, half-finished state), the 
 4. Re-verified clean: `tsc --noEmit`, `eslint --max-warnings 0`, `svelte-check` (same flags as before), and
    `prettier --check` all pass across both `web/` and `packages/sdk/`, with zero errors or warnings.
 
-One trivial, harmless loose end: `pnpm-lock.yaml` still lists `@oazapfts/runtime` as a direct `web` dependency
-(added when the temporary client needed it) because `pnpm` wasn't available on this host to regenerate the
-lockfile after reverting the `package.json` entry - it will self-correct on the next real `pnpm install` and
-causes no functional issue in the meantime.
+**Correction (post-deployment):** this section originally claimed the resulting `pnpm-lock.yaml`/`web/package.json`
+mismatch (the lockfile still listing `@oazapfts/runtime` as a direct `web` dependency after it was dropped from
+`package.json`) was a "trivial, harmless loose end" that "will self-correct on the next real `pnpm install`." That
+was wrong, and it broke a real production build: `server/Dockerfile`'s `web` stage runs
+`pnpm install --frozen-lockfile`, which treats any lockfile/`package.json` mismatch as a hard failure rather than
+something it silently reconciles. The build got past the earlier plugin-sdk cache issue (§ below) only to fail here
+with `[ERR_PNPM_OUTDATED_LOCKFILE]`. Fixed by fetching `pnpm@11.6.0` (the exact version this repo's
+`packageManager` field pins) via `npx` and running `pnpm install --lockfile-only` at the repo root, which
+regenerated `pnpm-lock.yaml` to match the current `package.json` files - a 20-line diff, entirely the
+`@oazapfts/runtime` removal from `web` plus a handful of `file:` → `link:` workspace-reference representation
+changes for `@immich/sdk` (functionally identical, just how this pnpm version records local workspace links).
+Verified with `pnpm install --frozen-lockfile --lockfile-only`, which now passes. Lesson: don't characterize a
+lockfile/manifest mismatch as harmless just because it doesn't break in dev - `--frozen-lockfile` in CI/production
+build paths makes it a hard blocker.
 
 This closes what was the #1 recommended follow-up in every earlier draft of this log. The temporary API client
 pattern used throughout Phase 4's build (and the reasoning for it) remains documented above and in git history
@@ -436,8 +446,6 @@ four phases) — there is no Phase 5. Before this feature is considered ready to
    reassign-face, manual-face-box, and rename through the actual UI (or the API directly) to verify the
    face-labeling flows beyond the empty-library checks done in §7.4.
 3. Run the full `e2e/` suite against a real browser + server once available.
-4. Regenerate `pnpm-lock.yaml` for real (run `pnpm install` from an environment with `pnpm` available) to drop
-   the now-unused `@oazapfts/runtime` direct entry noted in §7.4a - purely cosmetic, no functional impact.
-5. Consider whether `getRandomFace`'s feature-photo selection should become library-aware in a future pass (§6,
+4. Consider whether `getRandomFace`'s feature-photo selection should become library-aware in a future pass (§6,
    informational finding) — not required for this feature to be correct or safe, but would tighten an existing,
    pre-Phase-4 rough edge now that libraries are a first-class access boundary.
