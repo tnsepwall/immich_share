@@ -221,7 +221,8 @@ describe(`${AssetRepository.name}.updateLibraryAssetMetadata`, () => {
       libraryId: library.id,
       visibility: AssetVisibility.Timeline,
     });
-    await ctx.newExif({ assetId: asset.id });
+    // Deliberately no ctx.newExif() call here: this asset has no asset_exif row yet (as if metadata extraction
+    // hasn't completed), which is exactly the case that used to make the primitive silently write nothing.
 
     await sut.updateLibraryAssetMetadata(library.id, owner.id, [asset.id], {
       dateTimeOriginal: new Date('2020-06-15T12:00:00.000Z'),

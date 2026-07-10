@@ -271,3 +271,29 @@ endpoints (library-scoped person/face listing, create-and-assign, reassignment, 
 restriction) plus every piece of web UI (sharing hub additions, the shared-library browse route, role-aware asset
 viewer/editor, i18n, docs). Recommend running the deferred migration generation and medium/e2e tests (all three
 phases now have hand-written, DB-unverified migrations) before or alongside starting Phase 4.
+
+## 11. Pre-ship fix: `updateLibraryAssetMetadata` silently wrote nothing for an asset with no `asset_exif` row
+
+Found while root-causing an unrelated Phase 2 bug report, which prompted spinning up a real Postgres instance for
+the first time in this whole engagement and running every medium spec that had only ever been typechecked before.
+Two of this phase's own medium specs genuinely failed once actually executed (not just typechecked).
+
+The non-date and date branches of the transactional primitive both used a plain `UPDATE ... WHERE assetId IN
+(...)`. A Timeline-visibility asset can legitimately have no `asset_exif` row yet — metadata extraction hasn't
+completed, or failed — and an `UPDATE` against a nonexistent row silently affects zero rows with no error. The
+primitive would still return the asset ids as if it succeeded, and the service would re-fetch and return the
+(unchanged) asset as if the edit had landed: an Editor's metadata edit could silently do nothing while reporting
+success. Fixed by converting both branches to `INSERT ... ON CONFLICT (assetId) DO UPDATE SET ...`, so a missing
+row is created instead of silently skipped; the `ON CONFLICT` branch still only ever locks `lockedProperties` and
+still cancels any pending owner `sidecarWriteProperties` flag exactly as before.
+
+A second, self-inflicted bug turned up while fixing the first: the `DO UPDATE SET` object was built with a single
+`removeUndefinedKeys({...}, edit)` call wrapping *every* key, including `lockedProperties`/`sidecarWriteProperties`
+— but those two are never keys on `edit` at all, so `removeUndefinedKeys` stripped them unconditionally regardless
+of intent, meaning neither column was ever actually updated on conflict. Fixed by scoping `removeUndefinedKeys` to
+only the value columns that are genuine keys on `edit` (`description`/`rating`/`latitude`/`longitude`/`city`/
+`state`/`country`), with `lockedProperties`/`sidecarWriteProperties` computed unconditionally outside that call.
+
+Both fixes were verified by actually executing (not just typechecking) this phase's own medium spec
+(`test/medium/specs/repositories/asset.repository.library-editor.spec.ts`) against a real Postgres instance for
+the first time - all 9 tests pass, including the two that had been silently broken.

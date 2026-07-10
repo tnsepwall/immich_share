@@ -366,6 +366,7 @@ export class AlbumRepository {
       .with('album_user', (db) =>
         db
           .insertInto('album_user')
+          .columns(['albumId', 'userId', 'role'])
           .expression((eb) =>
             eb
               .selectFrom('album')
@@ -380,6 +381,11 @@ export class AlbumRepository {
       .with('album_asset', (db) =>
         db
           .insertInto('album_asset')
+          // Explicit target columns are required here: a bare INSERT ... SELECT with no .columns() maps the
+          // subquery's outputs onto the table's columns BY PHYSICAL POSITION, not by name. sourceLibraryId was
+          // added to this table by a later ALTER TABLE (Phase 2), so it lives after createdAt/updatedAt/updateId
+          // in physical column order - without this, the 3rd selected value silently lands in createdAt instead.
+          .columns(['albumId', 'assetId', 'sourceLibraryId'])
           .expression((eb) =>
             eb
               .selectFrom('album')
@@ -390,7 +396,11 @@ export class AlbumRepository {
               ]),
           )
           .onConflict((oc) => oc.doNothing())
-          .returning(['album_asset.albumId', 'album_asset.assetId']),
+          // Must also return sourceLibraryId: within this query, the "album_asset" CTE name shadows the real
+          // table for every later reference (including the outer withAssets()/withAlbumAssetProvenance() read
+          // below, which filters on album_asset.sourceLibraryId) - whatever this RETURNING list omits becomes
+          // "column does not exist" downstream, not a fallback to the real table's row.
+          .returning(['album_asset.albumId', 'album_asset.assetId', 'album_asset.sourceLibraryId']),
       )
       .selectFrom('album')
       .selectAll('album')
@@ -535,6 +545,9 @@ export class AlbumRepository {
   async copyAlbums({ sourceAssetId, targetAssetId }: { sourceAssetId: string; targetAssetId: string }) {
     return this.db
       .insertInto('album_asset')
+      // Same reason as create()'s album_asset CTE above: without explicit .columns(), the 3rd selected value
+      // (sourceLibraryId) would land in the table's actual 3rd physical column (createdAt) instead.
+      .columns(['albumId', 'assetId', 'sourceLibraryId'])
       .expression((eb) =>
         eb
           .selectFrom('album_asset')
