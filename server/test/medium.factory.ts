@@ -223,7 +223,7 @@ export class MediumTestContext<S extends BaseService = BaseService> {
     const album = mediumFactory.albumInsert(dto);
     const result = await this.get(AlbumRepository).create(
       album,
-      assetIds ?? [],
+      (assetIds ?? []).map((assetId) => ({ assetId, sourceLibraryId: null })),
       [{ userId: ownerId, role: AlbumUserRole.Owner }],
       ownerId,
     );

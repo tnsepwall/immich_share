@@ -92,6 +92,7 @@ export class SearchService extends BaseService {
         checksum,
         visibility: dto.visibility ?? (auth.session?.hasElevatedPermission ? undefined : 'not-locked'),
         userIds,
+        requestedBy: dto.albumIds && dto.albumIds.length > 0 ? (auth.sharedLink ? null : auth.user.id) : undefined,
         orderDirection: dto.order ?? AssetOrder.Desc,
       },
     );

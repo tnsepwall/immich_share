@@ -213,6 +213,7 @@ class AlbumAssetSync extends BaseSync {
       )
       .select('album_asset.updateId')
       .where('album_asset.albumId', '=', albumId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 
@@ -233,6 +234,7 @@ class AlbumAssetSync extends BaseSync {
       )
       .select('asset.updateId')
       .where('album_asset.updateId', '<=', albumToAssetAck.updateId) // Ensure we only send updates for assets that the client already knows about
+      .where('album_asset.sourceLibraryId', 'is', null)
       .innerJoin('album_user', 'album_user.albumId', 'album_asset.albumId')
       .where('album_user.userId', '=', userId)
       .stream();
@@ -256,6 +258,7 @@ class AlbumAssetSync extends BaseSync {
       )
       .innerJoin('album_user', 'album_user.albumId', 'album_asset.albumId')
       .where('album_user.userId', '=', userId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 }
@@ -268,6 +271,7 @@ class AlbumAssetExifSync extends BaseSync {
       .select(columns.syncAssetExif)
       .select('album_asset.updateId')
       .where('album_asset.albumId', '=', albumId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 
@@ -279,6 +283,7 @@ class AlbumAssetExifSync extends BaseSync {
       .select(columns.syncAssetExif)
       .select('asset_exif.updateId')
       .where('album_asset.updateId', '<=', albumToAssetAck.updateId) // Ensure we only send exif updates for assets that the client already knows about
+      .where('album_asset.sourceLibraryId', 'is', null)
       .innerJoin('album_user', 'album_user.albumId', 'album_asset.albumId')
       .where('album_user.userId', '=', userId)
       .stream();
@@ -294,6 +299,7 @@ class AlbumAssetExifSync extends BaseSync {
       .innerJoin('album', 'album.id', 'album_asset.albumId')
       .leftJoin('album_user', 'album_user.albumId', 'album_asset.albumId')
       .where('album_user.userId', '=', userId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 }
@@ -304,6 +310,7 @@ class AlbumToAssetSync extends BaseSync {
     return this.backfillQuery('album_asset', options)
       .select(['album_asset.assetId as assetId', 'album_asset.albumId as albumId', 'album_asset.updateId'])
       .where('album_asset.albumId', '=', albumId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 
@@ -333,6 +340,7 @@ class AlbumToAssetSync extends BaseSync {
       .select(['album_asset.assetId as assetId', 'album_asset.albumId as albumId', 'album_asset.updateId'])
       .innerJoin('album_user', 'album_user.albumId', 'album_asset.albumId')
       .where('album_user.userId', '=', userId)
+      .where('album_asset.sourceLibraryId', 'is', null)
       .stream();
   }
 }

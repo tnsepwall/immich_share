@@ -11,6 +11,7 @@ import { UpdatedAtTrigger, UpdateIdColumn } from 'src/decorators';
 import { album_asset_delete_audit } from 'src/schema/functions';
 import { AlbumTable } from 'src/schema/tables/album.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
+import { LibraryTable } from 'src/schema/tables/library.table';
 
 @Table({ name: 'album_asset' })
 @UpdatedAtTrigger('album_asset_updatedAt')
@@ -26,6 +27,10 @@ export class AlbumAssetTable {
 
   @ForeignKeyColumn(() => AssetTable, { onDelete: 'CASCADE', onUpdate: 'CASCADE', nullable: false, primary: true })
   assetId!: string;
+
+  /** Non-null marks this row as added via a shared-library grant rather than an ordinary album share. */
+  @ForeignKeyColumn(() => LibraryTable, { onDelete: 'CASCADE', onUpdate: 'CASCADE', nullable: true, index: true })
+  sourceLibraryId!: string | null;
 
   @CreateDateColumn()
   createdAt!: Generated<Timestamp>;

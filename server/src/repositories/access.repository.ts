@@ -4,7 +4,7 @@ import { InjectKysely } from 'nestjs-kysely';
 import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators';
 import { AlbumUserRole, AssetVisibility } from 'src/enum';
 import { DB } from 'src/schema';
-import { asUuid } from 'src/utils/database';
+import { asUuid, withAlbumAssetProvenance } from 'src/utils/database';
 
 class ActivityAccess {
   constructor(private db: Kysely<DB>) {}
@@ -148,9 +148,9 @@ class AssetAccess {
     return this.db
       .with('target', (qb) => qb.selectNoFrom(sql`array[${sql.join([...assetIds])}]::uuid[]`.as('ids')))
       .selectFrom('album')
-      .innerJoin('album_asset as albumAssets', 'album.id', 'albumAssets.albumId')
+      .innerJoin('album_asset', 'album.id', 'album_asset.albumId')
       .innerJoin('asset', (join) =>
-        join.onRef('asset.id', '=', 'albumAssets.assetId').on('asset.deletedAt', 'is', null),
+        join.onRef('asset.id', '=', 'album_asset.assetId').on('asset.deletedAt', 'is', null),
       )
       .leftJoin('album_user as albumUsers', 'albumUsers.albumId', 'album.id')
       .leftJoin('user', (join) => join.onRef('user.id', '=', 'albumUsers.userId').on('user.deletedAt', 'is', null))
@@ -164,6 +164,7 @@ class AssetAccess {
       )
       .where('user.id', '=', userId)
       .where('album.deletedAt', 'is', null)
+      .where(withAlbumAssetProvenance(userId))
       .execute()
       .then((assets) => {
         const allowedIds = new Set<string>();
@@ -254,6 +255,30 @@ class AssetAccess {
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryAlbumAddAccess(userId: string, assetIds: Set<string>) {
+    if (assetIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .innerJoin('asset', (join) => join.onRef('asset.libraryId', '=', 'library.id').on('asset.deletedAt', 'is', null))
+      .select('asset.id')
+      .where('library_user.userId', '=', userId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.id', 'in', [...assetIds])
+      .execute()
+      .then((assets) => new Set(assets.map((asset) => asset.id)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
   async checkSharedLinkAccess(sharedLinkId: string, assetIds: Set<string>) {
     if (assetIds.size === 0) {
       return new Set<string>();
@@ -277,6 +302,9 @@ class AssetAccess {
         'albumAssets.livePhotoVideoId as albumAssetLivePhotoVideoId',
       ])
       .where('shared_link.id', '=', sharedLinkId)
+      // Anonymous visitor: only ordinary (non-provenance) album_asset rows grant access, as defense in depth
+      // alongside the write-time guards that keep a provenance row and a shared link mutually exclusive.
+      .where(withAlbumAssetProvenance(null))
       .where(
         sql`array["asset"."id", "asset"."livePhotoVideoId", "albumAssets"."id", "albumAssets"."livePhotoVideoId"]`,
         '&&',

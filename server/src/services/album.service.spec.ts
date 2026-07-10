@@ -233,7 +233,7 @@ describe(AlbumService.name, () => {
           order: album.order,
           albumThumbnailAssetId: assetId,
         },
-        [assetId],
+        [{ assetId, sourceLibraryId: null }],
         [
           { userId: owner.id, role: AlbumUserRole.Owner },
           { userId: albumUser.userId, role: AlbumUserRole.Editor },
@@ -289,7 +289,7 @@ describe(AlbumService.name, () => {
           order: 'asc',
           albumThumbnailAssetId: assetId,
         },
-        [assetId],
+        [{ assetId, sourceLibraryId: null }],
         [{ userId: owner.id, role: AlbumUserRole.Owner }, albumUser],
         owner.id,
       );
@@ -341,7 +341,7 @@ describe(AlbumService.name, () => {
           order: 'desc',
           albumThumbnailAssetId: assetId,
         },
-        [assetId],
+        [{ assetId, sourceLibraryId: null }],
         [{ userId: owner.id, role: AlbumUserRole.Owner }],
         owner.id,
       );
@@ -913,6 +913,80 @@ describe(AlbumService.name, () => {
 
       expect(mocks.access.asset.checkOwnerAccess).toHaveBeenCalledWith(owner.id, new Set([asset.id]), false);
       expect(mocks.access.asset.checkPartnerAccess).toHaveBeenCalledWith(owner.id, new Set([asset.id]));
+    });
+
+    it('should add a shared-library asset to the album owner\'s own album via a library grant', async () => {
+      const owner = UserFactory.create();
+      const album = AlbumFactory.from().owner(owner).build();
+      const asset = AssetFactory.create({ libraryId: newUuid() });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkPartnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkSharedLibraryAlbumAddAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.asset.getByIds.mockResolvedValue([asset]);
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await expect(sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] })).resolves.toEqual([
+        { success: true, id: asset.id },
+      ]);
+
+      expect(mocks.album.addLibraryAssetIds).toHaveBeenCalledWith(album.id, [
+        { assetId: asset.id, sourceLibraryId: asset.libraryId },
+      ]);
+    });
+
+    it('should not use a library grant when the requester is only an album editor', async () => {
+      const user = UserFactory.create();
+      const album = AlbumFactory.from().albumUser({ userId: user.id, role: AlbumUserRole.Editor }).build();
+      const asset = AssetFactory.create({ libraryId: newUuid() });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.album.checkSharedAlbumAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkPartnerAccess.mockResolvedValue(new Set());
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await expect(sut.addAssets(AuthFactory.create(user), album.id, { ids: [asset.id] })).resolves.toEqual([
+        { success: false, id: asset.id, error: BulkIdErrorReason.NO_PERMISSION },
+      ]);
+
+      expect(mocks.access.asset.checkSharedLibraryAlbumAddAccess).not.toHaveBeenCalled();
+      expect(mocks.album.addLibraryAssetIds).not.toHaveBeenCalled();
+    });
+
+    it('should not use a library grant when the album already has a shared link', async () => {
+      const owner = UserFactory.create();
+      const album = AlbumFactory.from().owner(owner).build();
+      const asset = AssetFactory.create({ libraryId: newUuid() });
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkPartnerAccess.mockResolvedValue(new Set());
+      mocks.album.getById.mockResolvedValue({ ...getForAlbum(album), sharedLinks: [{ id: 'link-1' }] as any });
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set());
+
+      await expect(sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] })).resolves.toEqual([
+        { success: false, id: asset.id, error: BulkIdErrorReason.NO_PERMISSION },
+      ]);
+
+      expect(mocks.access.asset.checkSharedLibraryAlbumAddAccess).not.toHaveBeenCalled();
+      expect(mocks.album.addLibraryAssetIds).not.toHaveBeenCalled();
+    });
+
+    it('should upgrade an existing library-provenance row when the requester gains genuine AssetShare access', async () => {
+      const owner = UserFactory.create();
+      const album = AlbumFactory.from().owner(owner).build();
+      const asset = AssetFactory.create();
+      mocks.access.album.checkOwnerAccess.mockResolvedValue(new Set([album.id]));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.album.getById.mockResolvedValue(getForAlbum(album));
+      mocks.album.getAssetIds.mockResolvedValueOnce(new Set([asset.id]));
+
+      await expect(sut.addAssets(AuthFactory.create(owner), album.id, { ids: [asset.id] })).resolves.toEqual([
+        { success: false, id: asset.id, error: BulkIdErrorReason.DUPLICATE },
+      ]);
+
+      expect(mocks.album.upgradeProvenanceGrants).toHaveBeenCalledWith(album.id, [asset.id]);
     });
 
     it('should not allow unauthorized access to the album', async () => {

@@ -59,6 +59,8 @@ describe(TimelineService.name, () => {
         {
           timeBucket: 'bucket',
           albumId: 'album-id',
+          requestedBy: authStub.admin.user.id,
+          userIds: undefined,
         },
         authStub.admin,
       );

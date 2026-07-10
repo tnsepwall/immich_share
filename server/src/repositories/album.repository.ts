@@ -18,7 +18,7 @@ import { AlbumUserRole } from 'src/enum';
 import { DB } from 'src/schema';
 import { AlbumTable } from 'src/schema/tables/album.table';
 import { AssetExifTable } from 'src/schema/tables/asset-exif.table';
-import { asUuid, dummy, withDefaultVisibility } from 'src/utils/database';
+import { asUuid, dummy, withAlbumAssetProvenance, withDefaultVisibility } from 'src/utils/database';
 
 export interface AlbumAssetCount {
   albumId: string;
@@ -52,7 +52,7 @@ const withSharedLink = (eb: ExpressionBuilder<DB, 'album'>) =>
     eb.selectFrom('shared_link').selectAll('shared_link').whereRef('shared_link.albumId', '=', 'album.id'),
   ).as('sharedLinks');
 
-const withAssets = (eb: ExpressionBuilder<DB, 'album'>) => {
+const withAssets = (authUserId?: string) => (eb: ExpressionBuilder<DB, 'album'>) => {
   return eb
     .selectFrom((eb) =>
       eb
@@ -65,6 +65,7 @@ const withAssets = (eb: ExpressionBuilder<DB, 'album'>) => {
         .innerJoin('album_asset', 'album_asset.assetId', 'asset.id')
         .whereRef('album_asset.albumId', '=', 'album.id')
         .where('asset.deletedAt', 'is', null)
+        .where(withAlbumAssetProvenance(authUserId ?? null))
         .$call(withDefaultVisibility)
         .orderBy('asset.fileCreatedAt', 'desc')
         .as('asset'),
@@ -96,7 +97,7 @@ export class AlbumRepository {
       .where('album.deletedAt', 'is', null)
       .select(withAlbumUsers(authUserId))
       .select(withSharedLink)
-      .$if(options.withAssets, (eb) => eb.select(withAssets))
+      .$if(options.withAssets, (eb) => eb.select(withAssets(authUserId)))
       .$narrowType<{ assets: NotNull }>()
       .executeTakeFirst();
   }
@@ -117,6 +118,7 @@ export class AlbumRepository {
       )
       .where('album_asset.assetId', '=', assetId)
       .where('album.deletedAt', 'is', null)
+      .where(withAlbumAssetProvenance(ownerId))
       .select(withAlbumUsers(ownerId))
       .orderBy('album.createdAt', 'desc')
       .execute();
@@ -143,6 +145,7 @@ export class AlbumRepository {
       )
       .where('album_asset.assetId', 'in', assetIds)
       .where('album.deletedAt', 'is', null)
+      .where(withAlbumAssetProvenance(ownerId))
       .select('album_asset.assetId')
       .execute();
 
@@ -157,9 +160,9 @@ export class AlbumRepository {
     return map;
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID]] })
+  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.UUID] })
   @ChunkedArray()
-  async getMetadataForIds(ids: string[]): Promise<AlbumAssetCount[]> {
+  async getMetadataForIds(ids: string[], requestedBy: string | null): Promise<AlbumAssetCount[]> {
     // Guard against running invalid query when ids list is empty.
     if (ids.length === 0) {
       return [];
@@ -178,6 +181,7 @@ export class AlbumRepository {
         .select((eb) => sql<number>`${eb.fn.count('asset.id')}::int`.as('assetCount'))
         .where('album_asset.albumId', 'in', ids)
         .where('asset.deletedAt', 'is', null)
+        .where(withAlbumAssetProvenance(requestedBy))
         .groupBy('album_asset.albumId')
         .execute()
     );
@@ -292,12 +296,46 @@ export class AlbumRepository {
       return;
     }
 
+    // Ordinary (AssetShare-backed) grant: durable, so it upgrades any existing library-provenance row to null.
     await this.db
       .insertInto('album_asset')
       .expression((eb) =>
         eb.selectFrom(dummy).select([asUuid(albumId).as('albumId'), sql`unnest(${assetIds}::uuid[])`.as('assetId')]),
       )
-      .onConflict((oc) => oc.doNothing())
+      .onConflict((oc) => oc.columns(['albumId', 'assetId']).doUpdateSet({ sourceLibraryId: null }))
+      .execute();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, [{ assetId: DummyValue.UUID, sourceLibraryId: DummyValue.UUID }]] })
+  async addLibraryAssetIds(albumId: string, assets: { assetId: string; sourceLibraryId: string }[]): Promise<void> {
+    if (assets.length === 0) {
+      return;
+    }
+
+    // Library-grant insertion must never overwrite an existing row (durable or another library's), so DO NOTHING.
+    await this.db
+      .insertInto('album_asset')
+      .values(assets.map(({ assetId, sourceLibraryId }) => ({ albumId, assetId, sourceLibraryId })))
+      .onConflict((oc) => oc.columns(['albumId', 'assetId']).doNothing())
+      .execute();
+  }
+
+  /**
+   * Upgrades already-present album_asset rows to a durable (null-provenance) grant. Needed because the shared
+   * `addAssets` util treats "already present" (per getAssetIds, which is deliberately provenance-unfiltered) as a
+   * hard skip, so a genuine new AssetShare grant would otherwise never flip an existing library-provenance row.
+   */
+  async upgradeProvenanceGrants(albumId: string, assetIds: string[]): Promise<void> {
+    if (assetIds.length === 0) {
+      return;
+    }
+
+    await this.db
+      .updateTable('album_asset')
+      .set({ sourceLibraryId: null })
+      .where('albumId', '=', albumId)
+      .where('assetId', 'in', assetIds)
+      .where('sourceLibraryId', 'is not', null)
       .execute();
   }
 
@@ -310,7 +348,7 @@ export class AlbumRepository {
   })
   async create(
     album: Insertable<AlbumTable>,
-    assetIds: string[],
+    assets: { assetId: string; sourceLibraryId: string | null }[],
     albumUsers: AlbumUserCreateDto[],
     authUserId: string,
   ) {
@@ -320,6 +358,8 @@ export class AlbumRepository {
 
     const userIds = albumUsers.map((u) => u.userId);
     const roles = albumUsers.map((u) => u.role);
+    const assetIds = assets.map((a) => a.assetId);
+    const sourceLibraryIds = assets.map((a) => a.sourceLibraryId);
 
     const result = await this.db
       .with('album', (db) => db.insertInto('album').values(album).returningAll())
@@ -343,7 +383,11 @@ export class AlbumRepository {
           .expression((eb) =>
             eb
               .selectFrom('album')
-              .select(({ ref }) => [ref('album.id').as('albumId'), sql`unnest(${assetIds}::uuid[])`.as('assetId')]),
+              .select(({ ref }) => [
+                ref('album.id').as('albumId'),
+                sql`unnest(${assetIds}::uuid[])`.as('assetId'),
+                sql`unnest(${sourceLibraryIds}::uuid[])`.as('sourceLibraryId'),
+              ]),
           )
           .onConflict((oc) => oc.doNothing())
           .returning(['album_asset.albumId', 'album_asset.assetId']),
@@ -351,7 +395,7 @@ export class AlbumRepository {
       .selectFrom('album')
       .selectAll('album')
       .select(withAlbumUsers(authUserId))
-      .select(withAssets)
+      .select(withAssets(authUserId))
       .$narrowType<{ assets: NotNull }>()
       .executeTakeFirstOrThrow();
 
@@ -378,10 +422,25 @@ export class AlbumRepository {
     if (values.length === 0) {
       return;
     }
+    // Ordinary (AssetShare-backed) bulk grant: durable, so it upgrades any existing library-provenance row to null.
     await this.db
       .insertInto('album_asset')
       .values(values)
-      // Allow idempotent album sync without failing on existing album memberships.
+      .onConflict((oc) => oc.columns(['albumId', 'assetId']).doUpdateSet({ sourceLibraryId: null }))
+      .execute();
+  }
+
+  @Chunked({ chunkSize: 30_000 })
+  async addLibraryAssetIdsToAlbums(
+    values: { albumId: string; assetId: string; sourceLibraryId: string }[],
+  ): Promise<void> {
+    if (values.length === 0) {
+      return;
+    }
+    // Bulk library-grant insertion must never overwrite an existing row (durable or another library's).
+    await this.db
+      .insertInto('album_asset')
+      .values(values)
       .onConflict((oc) => oc.columns(['albumId', 'assetId']).doNothing())
       .execute();
   }
@@ -434,25 +493,42 @@ export class AlbumRepository {
       .innerJoin('asset', (join) =>
         join.onRef('album_asset.assetId', '=', 'asset.id').on('asset.deletedAt', 'is', null),
       )
-      .whereRef('album_asset.albumId', '=', 'album.id');
+      .whereRef('album_asset.albumId', '=', 'album.id')
+      // Automatic thumbnail selection is unscoped to any one viewer, so only durable (non-provenance) assets are
+      // eligible — otherwise the chosen cover could be one only the original library recipient can actually view.
+      .where('album_asset.sourceLibraryId', 'is', null);
   }
 
   /**
    * Get per-user asset contribution counts for a single album.
    * Excludes deleted assets, orders by count desc.
    */
-  @GenerateSql({ params: [DummyValue.UUID] })
-  getContributorCounts(id: string) {
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  getContributorCounts(id: string, requestedBy: string | null) {
     return this.db
       .selectFrom('album_asset')
       .innerJoin('asset', 'asset.id', 'assetId')
       .where('asset.deletedAt', 'is', sql.lit(null))
       .where('album_asset.albumId', '=', id)
+      .where(withAlbumAssetProvenance(requestedBy))
       .select('asset.ownerId as userId')
       .select((eb) => eb.fn.countAll<number>().as('assetCount'))
       .groupBy('asset.ownerId')
       .orderBy('assetCount', 'desc')
       .execute();
+  }
+
+  /** Used to block creating a shared link on an album that contains any library-derived (provenance) asset. */
+  @GenerateSql({ params: [DummyValue.UUID] })
+  async hasProvenanceAssets(albumId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom('album_asset')
+      .select('assetId')
+      .where('albumId', '=', albumId)
+      .where('sourceLibraryId', 'is not', null)
+      .limit(1)
+      .executeTakeFirst();
+    return !!row;
   }
 
   @GenerateSql({ params: [{ sourceAssetId: DummyValue.UUID, targetAssetId: DummyValue.UUID }] })
@@ -462,7 +538,11 @@ export class AlbumRepository {
       .expression((eb) =>
         eb
           .selectFrom('album_asset')
-          .select((eb) => ['album_asset.albumId', eb.val(targetAssetId).as('assetId')])
+          .select((eb) => [
+            'album_asset.albumId',
+            eb.val(targetAssetId).as('assetId'),
+            'album_asset.sourceLibraryId',
+          ])
           .where('album_asset.assetId', '=', sourceAssetId),
       )
       .onConflict((oc) => oc.doNothing())

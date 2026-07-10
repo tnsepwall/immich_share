@@ -250,18 +250,55 @@ export function hasPeople<O>(qb: SelectQueryBuilder<DB, 'asset', O>, personIds: 
   );
 }
 
-export function inAlbums<O>(qb: SelectQueryBuilder<DB, 'asset', O>, albumIds: string[]) {
+export function inAlbums<O>(qb: SelectQueryBuilder<DB, 'asset', O>, albumIds: string[], userId: string | null) {
   return qb.innerJoin(
     (eb) =>
       eb
         .selectFrom('album_asset')
         .select('assetId')
         .where('albumId', '=', anyUuid(albumIds!))
+        .where(withAlbumAssetProvenance(userId))
         .groupBy('assetId')
         .having((eb) => eb.fn.count('albumId').distinct(), '=', albumIds.length)
         .as('has_album'),
     (join) => join.onRef('has_album.assetId', '=', 'asset.id'),
   );
+}
+
+/**
+ * Gates a non-ordinary (`sourceLibraryId is not null`) `album_asset` row behind the same access a shared-library
+ * recipient gets elsewhere: the row's exact source library must still be active, its owner non-deleted, the asset
+ * must still belong to that library and be non-deleted Timeline visibility, and `userId` must be the library's
+ * owner or hold an active `library_user` share. Pass `userId: null` (e.g. anonymous shared-link visitors) to drop
+ * every provenance row and keep only ordinary (null) grants.
+ */
+export function withAlbumAssetProvenance(userId: string | null) {
+  return (eb: ExpressionBuilder<DB, 'album_asset'>) =>
+    eb.or([
+      eb('album_asset.sourceLibraryId', 'is', null),
+      userId
+        ? eb.exists(
+            eb
+              .selectFrom('asset')
+              .innerJoin('library', (join) =>
+                join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
+              )
+              .innerJoin('user as owner', (join) =>
+                join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+              )
+              .leftJoin('library_user', (join) =>
+                join.onRef('library_user.libraryId', '=', 'library.id').on('library_user.userId', '=', userId),
+              )
+              .whereRef('asset.id', '=', 'album_asset.assetId')
+              .whereRef('library.id', '=', 'album_asset.sourceLibraryId')
+              .where('asset.deletedAt', 'is', null)
+              .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+              .where((inner) =>
+                inner.or([inner('library.ownerId', '=', userId), inner('library_user.userId', 'is not', null)]),
+              ),
+          )
+        : eb.lit(false),
+    ]);
 }
 
 export function hasTags<O>(qb: SelectQueryBuilder<DB, 'asset', O>, tagIds: string[]) {
@@ -382,7 +419,9 @@ export function searchAssetBuilder(kysely: Kysely<DB>, options: AssetSearchBuild
         ? qb.where('asset.visibility', '!=', AssetVisibility.Locked)
         : qb.where('asset.visibility', '=', options.visibility!),
     )
-    .$if(!!options.albumIds && options.albumIds.length > 0, (qb) => inAlbums(qb, options.albumIds!))
+    .$if(!!options.albumIds && options.albumIds.length > 0, (qb) =>
+      inAlbums(qb, options.albumIds!, options.requestedBy ?? null),
+    )
     .$if(!!options.tagIds && options.tagIds.length > 0, (qb) => hasTags(qb, options.tagIds!))
     .$if(options.tagIds === null, (qb) =>
       qb.where((eb) => eb.not(eb.exists((eb) => eb.selectFrom('tag_asset').whereRef('assetId', '=', 'asset.id')))),
@@ -483,7 +522,16 @@ export function searchAssetBuilder(kysely: Kysely<DB>, options: AssetSearchBuild
       qb.where('asset.livePhotoVideoId', options.isMotion ? 'is not' : 'is', null),
     )
     .$if(!!options.isNotInAlbum && (!options.albumIds || options.albumIds.length === 0), (qb) =>
-      qb.where((eb) => eb.not(eb.exists((eb) => eb.selectFrom('album_asset').whereRef('assetId', '=', 'asset.id')))),
+      qb.where((eb) =>
+        eb.not(
+          eb.exists((eb) =>
+            eb
+              .selectFrom('album_asset')
+              .whereRef('assetId', '=', 'asset.id')
+              .where('sourceLibraryId', 'is', null),
+          ),
+        ),
+      ),
     )
     .$if(options.withStacked === false, (qb) => qb.where('asset.stackId', 'is', null))
     .$if(!!options.withExif, withExifInner)

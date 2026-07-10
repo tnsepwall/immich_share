@@ -48,7 +48,9 @@ export class TimelineService extends BaseService {
       }
     }
 
-    return { ...options, userIds };
+    const requestedBy = dto.albumId ? (auth.sharedLink ? null : auth.user.id) : undefined;
+
+    return { ...options, userIds, requestedBy };
   }
 
   // Returns the loaded library when `dto.libraryId` is set, so callers don't re-fetch it in buildTimeBucketOptions.

@@ -253,7 +253,7 @@ describe(DownloadService.name, () => {
       await expect(sut.getDownloadInfo(authStub.admin, { albumId: 'album-1' })).resolves.toEqual(downloadResponse);
 
       expect(mocks.access.album.checkOwnerAccess).toHaveBeenCalledWith(authStub.admin.user.id, new Set(['album-1']));
-      expect(mocks.downloadRepository.downloadAlbumId).toHaveBeenCalledWith('album-1');
+      expect(mocks.downloadRepository.downloadAlbumId).toHaveBeenCalledWith('album-1', authStub.admin.user.id);
     });
 
     it('should return a list of archives (userId)', async () => {
