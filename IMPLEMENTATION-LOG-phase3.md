@@ -215,6 +215,21 @@ escalation, at most one extra database-only edit — so this is left as a docume
 `FOR UPDATE` row locking or SERIALIZABLE isolation, the same call Phase 2 made for its own non-transactional
 shared-link/provenance race once confirmed to carry no actual exposure.
 
+### Informational — a malformed `timeZone` string surfaces as a raw 500, not a clean validation error
+
+Found independently (not by the review agent) while checking the atomicity claim above. `timeZone` is validated
+by the DTO only as `z.string()` — the same, pre-existing looseness the owner's own bulk-update DTO already has —
+so a caller can send a non-IANA, unparseable value straight through to
+`updateLibraryAssetMetadata`'s `DateTime.fromJSDate(base).setZone(timeZone)`. Luxon does not throw on an invalid
+zone; it silently produces an "Invalid Date" (confirmed: `DateTime.setZone('not-a-real-zone').toJSDate()` returns
+a `Date` whose `.getTime()` is `NaN`, `isValid: false`). Traced one level further: the `postgres` driver this repo
+uses serializes a `Date` parameter via `.toISOString()` (`node_modules/postgres/src/types.js`), and
+`Invalid Date.toISOString()` throws a `RangeError` — so the write genuinely fails and Kysely's `transaction()`
+wrapper rolls back cleanly. **No data corruption results.** The only real gap is presentation: the caller gets an
+unhandled 500 instead of a friendly 400 "invalid timezone" response. Not fixed — the owner path has the identical
+gap today, so this is parity with existing behavior rather than a Phase 3 regression, and the failure mode is
+safe. Worth a follow-up DTO-level IANA-zone refine if the rough edge is ever worth smoothing over.
+
 ### Correctly blocked (verified, not just assumed)
 
 Cross-library access (checked at both the outer `requireAccess` and the in-transaction scope re-check, independent
