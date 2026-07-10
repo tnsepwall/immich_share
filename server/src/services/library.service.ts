@@ -213,12 +213,18 @@ export class LibraryService extends BaseService {
 
   async get(id: string): Promise<LibraryResponseDto> {
     const library = await this.findOrFail(id);
-    return mapLibrary(library);
+    const sharedUsers = await this.libraryRepository.getSharedUsers(id);
+    return mapLibrary(library, { sharedUsers: sharedUsers.map((user) => mapLibraryUser(user)) });
   }
 
   async getAll(): Promise<LibraryResponseDto[]> {
     const libraries = await this.libraryRepository.getAll(false);
-    return libraries.map((library) => mapLibrary(library));
+    return Promise.all(
+      libraries.map(async (library) => {
+        const sharedUsers = await this.libraryRepository.getSharedUsers(library.id);
+        return mapLibrary(library, { sharedUsers: sharedUsers.map((user) => mapLibraryUser(user)) });
+      }),
+    );
   }
 
   async getMine(auth: AuthDto): Promise<LibraryResponseDto[]> {
