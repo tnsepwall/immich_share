@@ -278,6 +278,14 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.asset.checkSharedLibraryAlbumAddAccess(auth.user.id, ids);
     }
 
+    // uses library ids; owner ∪ Editor — a Viewer share must not grant this. The library-editor service
+    // separately scope-checks the asset ids against the same route library id.
+    case Permission.LibraryAssetUpdate: {
+      const isOwner = await access.library.checkOwnerAccess(auth.user.id, ids);
+      const isEditor = await access.library.checkEditorAccess(auth.user.id, setDifference(ids, isOwner));
+      return setUnion(isOwner, isEditor);
+    }
+
     case Permission.NotificationRead:
     case Permission.NotificationUpdate:
     case Permission.NotificationDelete: {

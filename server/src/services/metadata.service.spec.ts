@@ -174,6 +174,7 @@ describe(MetadataService.name, () => {
         mtimeMs: timeMs,
         birthtimeMs: timeMs,
       } as Stats);
+      mocks.assetJob.getLockedDatesForMetadataExtraction.mockResolvedValue(void 0);
     });
 
     it('should handle an asset that could not be found', async () => {
@@ -207,6 +208,34 @@ describe(MetadataService.name, () => {
           duration: null,
           fileCreatedAt: sidecarDate,
           localDateTime: sidecarDate,
+        }),
+      );
+    });
+
+    it('should derive localDateTime/fileCreatedAt from the locked DB date instead of a freshly re-scanned file date', async () => {
+      const freshFileDate = new Date('2024-03-01T09:30:00.000Z');
+      const lockedInstant = new Date('2020-06-15T12:00:00.000Z');
+      const asset = AssetFactory.create();
+      mocks.assetJob.getForMetadataExtraction.mockResolvedValue(getForMetadataExtraction(asset));
+      mocks.assetJob.getLockedDatesForMetadataExtraction.mockResolvedValue({
+        lockedProperties: ['dateTimeOriginal', 'timeZone'],
+        dateTimeOriginal: lockedInstant,
+        timeZone: 'UTC-5',
+      });
+      mockReadTags({ CreationDate: freshFileDate.toISOString() });
+
+      await sut.handleMetadataExtraction({ id: asset.id });
+
+      // asset_exif itself is protected by lockedPropertiesBehavior: 'skip' regardless of what's re-parsed here.
+      expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
+        expect.objectContaining({ lockedPropertiesBehavior: 'skip' }),
+      );
+      // The asset table's timeline-sort columns must reflect the locked value, not the freshly re-scanned file date.
+      expect(mocks.asset.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: asset.id,
+          fileCreatedAt: lockedInstant,
+          localDateTime: new Date('2020-06-15T07:00:00.000Z'),
         }),
       );
     });
@@ -1967,14 +1996,14 @@ describe(MetadataService.name, () => {
 
   describe('handleSidecarWrite', () => {
     it('should skip assets that no longer exist', async () => {
-      mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue([]);
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue([]);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(void 0);
       await expect(sut.handleSidecarWrite({ id: 'asset-123' })).resolves.toBe(JobStatus.Failed);
       expect(mocks.metadata.writeTags).not.toHaveBeenCalled();
     });
 
     it('should skip jobs with no metadata', async () => {
-      mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue([]);
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue([]);
       const asset = AssetFactory.from().file({ type: AssetFileType.Sidecar }).exif().build();
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
       await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Skipped);
@@ -1990,7 +2019,7 @@ describe(MetadataService.name, () => {
         .exif({ description, dateTimeOriginal: new Date(date), latitude: gps, longitude: gps })
         .build();
 
-      mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue([
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue([
         'description',
         'latitude',
         'longitude',
@@ -2023,18 +2052,37 @@ describe(MetadataService.name, () => {
       const asset = AssetFactory.from().file({ type: AssetFileType.Sidecar }).exif().build();
       asset.exifInfo.rating = 4;
 
-      mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue(['rating']);
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue(['rating']);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
       await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Success);
       expect(mocks.metadata.writeTags).toHaveBeenCalledWith(asset.files[0].path, { Rating: 4 });
       expect(mocks.asset.unlockProperties).toHaveBeenCalledWith(asset.id, ['rating']);
     });
 
+    it('should never write a property that is locked but not pending a sidecar write (editor-only lock)', async () => {
+      // A shared-library Editor's database-only edit (library-editor.service.ts) appends to lockedProperties
+      // only, never sidecarWriteProperties - simulate that split state directly: rating is locked (protected
+      // from extraction) but NOT in the set handleSidecarWrite is told is pending a write.
+      const asset = AssetFactory.from().file({ type: AssetFileType.Sidecar }).exif({ description: 'owner text' }).build();
+      asset.exifInfo.rating = 5;
+
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue(['description']);
+      mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
+      await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Success);
+
+      expect(mocks.metadata.writeTags).toHaveBeenCalledWith(
+        asset.files[0].path,
+        expect.not.objectContaining({ Rating: expect.anything() }),
+      );
+      // Only the genuinely-pending property gets unlocked; the editor's rating lock is untouched and persists.
+      expect(mocks.asset.unlockProperties).toHaveBeenCalledWith(asset.id, ['description']);
+    });
+
     it('should write null rating as 0', async () => {
       const asset = AssetFactory.from().file({ type: AssetFileType.Sidecar }).exif().build();
       asset.exifInfo.rating = null;
 
-      mocks.assetJob.getLockedPropertiesForMetadataExtraction.mockResolvedValue(['rating']);
+      mocks.assetJob.getSidecarWriteProperties.mockResolvedValue(['rating']);
       mocks.assetJob.getForSidecarWriteJob.mockResolvedValue(getForSidecarWrite(asset));
       await expect(sut.handleSidecarWrite({ id: asset.id })).resolves.toBe(JobStatus.Success);
       expect(mocks.metadata.writeTags).toHaveBeenCalledWith(asset.files[0].path, { Rating: 0 });

@@ -207,19 +207,34 @@ describe(TagService.name, () => {
       });
       expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: 'asset-1', lockedProperties: ['tags'], tags: ['tag-1', 'tag-2'] },
+          exif: {
+            assetId: 'asset-1',
+            lockedProperties: ['tags'],
+            sidecarWriteProperties: ['tags'],
+            tags: ['tag-1', 'tag-2'],
+          },
           lockedPropertiesBehavior: 'append',
         }),
       );
       expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: 'asset-2', lockedProperties: ['tags'], tags: ['tag-1', 'tag-2'] },
+          exif: {
+            assetId: 'asset-2',
+            lockedProperties: ['tags'],
+            sidecarWriteProperties: ['tags'],
+            tags: ['tag-1', 'tag-2'],
+          },
           lockedPropertiesBehavior: 'append',
         }),
       );
       expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: 'asset-3', lockedProperties: ['tags'], tags: ['tag-1', 'tag-2'] },
+          exif: {
+            assetId: 'asset-3',
+            lockedProperties: ['tags'],
+            sidecarWriteProperties: ['tags'],
+            tags: ['tag-1', 'tag-2'],
+          },
           lockedPropertiesBehavior: 'append',
         }),
       );
@@ -262,13 +277,13 @@ describe(TagService.name, () => {
 
       expect(mocks.asset.upsertExif).not.toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: 'asset-1', lockedProperties: ['tags'], tags: ['tag-1'] },
+          exif: { assetId: 'asset-1', lockedProperties: ['tags'], sidecarWriteProperties: ['tags'], tags: ['tag-1'] },
           lockedPropertiesBehavior: 'append',
         }),
       );
       expect(mocks.asset.upsertExif).toHaveBeenCalledWith(
         expect.objectContaining({
-          exif: { assetId: 'asset-2', lockedProperties: ['tags'], tags: ['tag-1'] },
+          exif: { assetId: 'asset-2', lockedProperties: ['tags'], sidecarWriteProperties: ['tags'], tags: ['tag-1'] },
           lockedPropertiesBehavior: 'append',
         }),
       );

@@ -13,8 +13,9 @@ import {
 } from 'kysely';
 import { jsonArrayFrom } from 'kysely/helpers/postgres';
 import { isEmpty, isUndefined, omitBy } from 'lodash';
+import { DateTime } from 'luxon';
 import { InjectKysely } from 'nestjs-kysely';
-import { LockableProperty, Stack } from 'src/database';
+import { lockableProperties, LockableProperty, Stack } from 'src/database';
 import { Chunked, ChunkedArray, DummyValue, GenerateSql } from 'src/decorators';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
@@ -25,6 +26,7 @@ import {
   AssetType,
   AssetVisibility,
   CalendarHeatmapType,
+  LibraryUserRole,
 } from 'src/enum';
 import { DB } from 'src/schema';
 import { AssetAudioTable, AssetKeyframeTable, AssetVideoTable } from 'src/schema/tables/asset-av.table';
@@ -99,6 +101,22 @@ interface AssetBuilderOptions {
   bbox?: BoundingBox;
 }
 
+// Resolved edit for the shared-library Editor's database-only metadata primitive - see updateLibraryAssetMetadata
+// below. The caller (library-editor.service.ts) resolves incoming DTO strings (dateTimeOriginal, geocoding) to
+// these already-parsed values before calling in; dateTimeOriginal and dateTimeRelative are mutually exclusive.
+export type LibraryAssetMetadataEdit = {
+  description?: string;
+  rating?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+  dateTimeOriginal?: Date;
+  dateTimeRelative?: number;
+  timeZone?: string;
+};
+
 export interface TimeBucketOptions extends AssetBuilderOptions {
   order?: AssetOrder;
   orderBy?: AssetOrderBy;
@@ -147,7 +165,24 @@ type UpsertExifOptions = {
 };
 
 const distinctLocked = <T extends LockableProperty[] | null>(eb: ExpressionBuilder<DB, 'asset_exif'>, columns: T) =>
-  sql<T>`nullif(array(select distinct unnest(${eb.ref('asset_exif.lockedProperties')} || ${columns})), '{}')`;
+  distinctUnion(eb, 'lockedProperties', columns);
+
+// Same union-and-dedupe as distinctLocked, generalized to either of asset_exif's two property-list columns:
+// lockedProperties (protected from metadata-extraction overwrite) and sidecarWriteProperties (still pending an
+// XMP sidecar write - see FEATURE-PLAN-shared-external-libraries.md Step 5b).
+const distinctUnion = <T extends LockableProperty[] | null>(
+  eb: ExpressionBuilder<DB, 'asset_exif'>,
+  column: 'lockedProperties' | 'sidecarWriteProperties',
+  additions: T,
+) => sql<T>`nullif(array(select distinct unnest(${eb.ref(`asset_exif.${column}`)} || ${additions})), '{}')`;
+
+// Inverse of distinctUnion: removes `properties` from one of the two property-list columns.
+const withoutProperties = (
+  eb: ExpressionBuilder<DB, 'asset_exif'>,
+  column: 'lockedProperties' | 'sidecarWriteProperties',
+  properties: LockableProperty[],
+) =>
+  sql<LockableProperty[] | null>`nullif(array(select distinct property from unnest(${eb.ref(`asset_exif.${column}`)}) property where not property = any(${properties})), '{}')`;
 
 const getBoundingCircle = (bbox: BoundingBox) => {
   const { west, south, east, north } = bbox;
@@ -184,7 +219,11 @@ export class AssetRepository {
   @GenerateSql({
     params: [
       {
-        exif: { dateTimeOriginal: DummyValue.DATE, lockedProperties: ['dateTimeOriginal'] },
+        exif: {
+          dateTimeOriginal: DummyValue.DATE,
+          lockedProperties: ['dateTimeOriginal'],
+          sidecarWriteProperties: ['dateTimeOriginal'],
+        },
         lockedPropertiesBehavior: 'append',
       },
     ],
@@ -302,6 +341,10 @@ export class AssetRepository {
                   lockedPropertiesBehavior === 'append'
                     ? distinctLocked(eb, exif.lockedProperties ?? null)
                     : ref('lockedProperties'),
+                sidecarWriteProperties:
+                  lockedPropertiesBehavior === 'append'
+                    ? distinctUnion(eb, 'sidecarWriteProperties', exif.sidecarWriteProperties ?? null)
+                    : ref('sidecarWriteProperties'),
               },
               exif,
             ),
@@ -323,6 +366,7 @@ export class AssetRepository {
       .set((eb) => ({
         ...options,
         lockedProperties: distinctLocked(eb, Object.keys(options) as LockableProperty[]),
+        sidecarWriteProperties: distinctUnion(eb, 'sidecarWriteProperties', Object.keys(options) as LockableProperty[]),
       }))
       .where('assetId', 'in', ids)
       .execute();
@@ -337,21 +381,158 @@ export class AssetRepository {
         dateTimeOriginal: sql`"dateTimeOriginal" + ${(delta ?? 0) + ' minute'}::interval`,
         timeZone,
         lockedProperties: distinctLocked(eb, ['dateTimeOriginal', 'timeZone']),
+        sidecarWriteProperties: distinctUnion(eb, 'sidecarWriteProperties', ['dateTimeOriginal', 'timeZone']),
       }))
       .where('assetId', 'in', ids)
       .returning(['assetId', 'dateTimeOriginal', 'timeZone'])
       .execute();
   }
 
+  // Called only after handleSidecarWrite successfully writes `properties` to the XMP sidecar - clears them from
+  // BOTH lockedProperties (extraction may overwrite them again) and sidecarWriteProperties (nothing left pending).
+  // An editor's database-only lock (library-editor.service.ts) never touches sidecarWriteProperties in the first
+  // place, so it is untouched by this call and stays locked forever - see Step 5b of the feature plan.
   @GenerateSql({ params: [DummyValue.UUID, ['description']] })
   unlockProperties(assetId: string, properties: LockableProperty[]) {
     return this.db
       .updateTable('asset_exif')
       .where('assetId', '=', assetId)
       .set((eb) => ({
-        lockedProperties: sql`nullif(array(select distinct property from unnest(${eb.ref('asset_exif.lockedProperties')}) property where not property = any(${properties})), '{}')`,
+        lockedProperties: withoutProperties(eb, 'lockedProperties', properties),
+        sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', properties),
       }))
       .execute();
+  }
+
+  /**
+   * Transactional, database-only metadata primitive for the shared-library Editor role (Step 5b of
+   * FEATURE-PLAN-shared-external-libraries.md). Re-verifies, INSIDE this same transaction, that `editorId` still
+   * owns or holds an active Editor `library_user` row for `libraryId`, and that every id in `assetIds` still
+   * belongs to that exact library as a non-deleted Timeline-visibility asset - closing the race where a role
+   * downgrade/removal lands between the caller's outer permission check and this write. If either check fails,
+   * nothing is written and this returns null (the whole batch is atomic: partial failure writes nothing).
+   *
+   * Only ever appends to `lockedProperties` (protects the value from a future metadata-extraction overwrite) -
+   * NEVER to `sidecarWriteProperties` - and never queues SidecarWrite, so an editor's edit can never reach the
+   * owner's original files. Compare to the owner-facing updateAllExif/updateDateTimeOriginal above, which lock
+   * both columns and do queue a sidecar write.
+   */
+  async updateLibraryAssetMetadata(
+    libraryId: string,
+    editorId: string,
+    assetIds: string[],
+    edit: LibraryAssetMetadataEdit,
+  ): Promise<string[] | null> {
+    return this.db.transaction().execute(async (trx) => {
+      const library = await trx
+        .selectFrom('library')
+        .innerJoin('user as owner', (join) => join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null))
+        .select('library.ownerId')
+        .where('library.id', '=', libraryId)
+        .where('library.deletedAt', 'is', null)
+        .executeTakeFirst();
+
+      if (!library) {
+        return null;
+      }
+
+      let isAuthorized = library.ownerId === editorId;
+      if (!isAuthorized) {
+        const share = await trx
+          .selectFrom('library_user')
+          .select('role')
+          .where('libraryId', '=', libraryId)
+          .where('userId', '=', editorId)
+          .executeTakeFirst();
+        isAuthorized = share?.role === LibraryUserRole.Editor;
+      }
+
+      if (!isAuthorized) {
+        return null;
+      }
+
+      const scoped = await trx
+        .selectFrom('asset')
+        .leftJoin('asset_exif', 'asset_exif.assetId', 'asset.id')
+        .select(['asset.id as assetId', 'asset_exif.dateTimeOriginal', 'asset_exif.timeZone'])
+        .where('asset.id', 'in', assetIds)
+        .where('asset.libraryId', '=', libraryId)
+        .where('asset.deletedAt', 'is', null)
+        .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+        .execute();
+
+      if (scoped.length !== assetIds.length) {
+        // At least one id was outside this library, deleted, or not Timeline visibility - write nothing.
+        return null;
+      }
+
+      const exifFieldsUpdate = removeUndefinedKeys(
+        {
+          description: edit.description,
+          rating: edit.rating,
+          latitude: edit.latitude,
+          longitude: edit.longitude,
+          city: edit.city,
+          state: edit.state,
+          country: edit.country,
+        },
+        edit,
+      );
+      const nonDateTouched = lockableProperties.filter((property) => property in exifFieldsUpdate);
+
+      if (nonDateTouched.length > 0) {
+        await trx
+          .updateTable('asset_exif')
+          .set((eb) => ({
+            ...exifFieldsUpdate,
+            lockedProperties: distinctUnion(eb, 'lockedProperties', nonDateTouched),
+            // A pending owner SidecarWrite job reads asset_exif's CURRENT value at run time, not a value snapshotted
+            // at queue time. If the editor overwrites a property the owner already queued a write for, that job
+            // would otherwise flush the editor's value to the XMP sidecar the moment it runs. Cancelling the pending
+            // flag for exactly the properties just touched closes that window - nothing valid is left to flush for
+            // the owner's now-superseded edit, and the editor's replacement value must never reach disk regardless.
+            sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', nonDateTouched),
+          }))
+          .where('assetId', 'in', assetIds)
+          .execute();
+      }
+
+      const isDateEdit = edit.dateTimeOriginal !== undefined || edit.dateTimeRelative !== undefined || edit.timeZone !== undefined;
+      if (isDateEdit) {
+        for (const row of scoped) {
+          const timeZone = edit.timeZone ?? row.timeZone ?? 'UTC';
+          const base =
+            edit.dateTimeOriginal ??
+            DateTime.fromJSDate(row.dateTimeOriginal ?? new Date())
+              .plus({ minutes: edit.dateTimeRelative ?? 0 })
+              .toJSDate();
+          // Reproduce the same instant -> zone -> "fake UTC" derivation metadata.service.ts#getDates uses, so an
+          // editor's date/timezone edit moves the asset to the correct timeline bucket immediately, with no job.
+          const dateTimeOriginal = DateTime.fromJSDate(base).setZone(timeZone);
+          const localDateTime = dateTimeOriginal.setZone('UTC', { keepLocalTime: true });
+
+          await trx
+            .updateTable('asset_exif')
+            .set((eb) => ({
+              dateTimeOriginal: dateTimeOriginal.toJSDate(),
+              timeZone,
+              lockedProperties: distinctUnion(eb, 'lockedProperties', ['dateTimeOriginal', 'timeZone']),
+              // Same pending-owner-write cancellation as the non-date branch above.
+              sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', ['dateTimeOriginal', 'timeZone']),
+            }))
+            .where('assetId', '=', row.assetId)
+            .execute();
+
+          await trx
+            .updateTable('asset')
+            .set({ localDateTime: localDateTime.toJSDate(), fileCreatedAt: dateTimeOriginal.toJSDate() })
+            .where('id', '=', row.assetId)
+            .execute();
+        }
+      }
+
+      return assetIds;
+    });
   }
 
   async upsertJobStatus(...jobStatus: Insertable<AssetJobStatusTable>[]): Promise<void> {

@@ -42,6 +42,7 @@ export class AssetExifFactory {
       projectionType: null,
       rating: 4,
       lockedProperties: [],
+      sidecarWriteProperties: [],
       state: 'Texas',
       tags: ['parent/child'],
       timeZone: 'UTC-6',
