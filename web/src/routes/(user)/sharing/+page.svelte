@@ -32,6 +32,13 @@
 
   let { data }: Props = $props();
 
+  // Loader data is not deeply reactive in Svelte 5, so binding the in-timeline switch straight
+  // into data.sharedLibraries persists correctly but never re-renders - the toggle only "moves"
+  // after a page refresh. Writable $derived: re-derives whenever the loader data changes
+  // (invalidateAll after share-modal actions), and toggle updates REASSIGN the whole list below
+  // (mutating an item would not be reactive - $derived values are not deep proxies).
+  let sharedLibraries = $derived(data.sharedLibraries);
+
   const openLibraryShareModal = async (library: LibraryResponseDto | SharedLibraryResponseDto) => {
     await modalManager.show(LibraryShareModal, { library });
     // The modal manages its own share list locally; refresh the loader data so the hub (and
@@ -43,15 +50,22 @@
   };
 
   // Sharee-controlled opt-in (§0.1/§6.1): mirrors PartnerSettings.svelte's
-  // handleShowOnTimelineChanged - bind:checked on the switch below already applies the change
-  // optimistically, so on failure we just revert it and surface the error.
+  // handleShowOnTimelineChanged, adapted to one-way data flow - reassigning the writable
+  // $derived list applies the change optimistically, and on failure we reassign it back.
+  const setInTimeline = (libraryId: string, inTimeline: boolean) => {
+    sharedLibraries = sharedLibraries.map((library) =>
+      library.id === libraryId ? { ...library, inTimeline } : library,
+    );
+  };
+
   const handleShowInTimelineChanged = async (library: SharedLibraryResponseDto, inTimeline: boolean) => {
+    setInTimeline(library.id, inTimeline);
     try {
       const updated = await updateMyLibraryShare({ id: library.id, libraryUserSelfUpdateDto: { inTimeline } });
-      library.inTimeline = updated.inTimeline;
+      setInTimeline(library.id, updated.inTimeline);
       toastManager.primary($t('saved_settings'));
     } catch (error) {
-      library.inTimeline = !inTimeline;
+      setInTimeline(library.id, !inTimeline);
       handleError(error, $t('errors.unable_to_update_timeline_display_status'));
     }
   };
@@ -101,15 +115,15 @@
       <hr class="mb-4 dark:border-immich-dark-gray" />
     {/if}
 
-    {#if data.sharedLibraries.length > 0 || data.myLibraries.length > 0}
+    {#if sharedLibraries.length > 0 || data.myLibraries.length > 0}
       <div class="mt-2 mb-6">
         <div>
           <p class="mb-4 font-medium dark:text-immich-dark-fg">{$t('shared_libraries')}</p>
         </div>
 
-        {#if data.sharedLibraries.length > 0}
+        {#if sharedLibraries.length > 0}
           <div class="flex flex-row flex-wrap gap-4">
-            {#each data.sharedLibraries as library (library.id)}
+            {#each sharedLibraries as library (library.id)}
               <div
                 class="flex flex-col gap-2 rounded-lg border border-gray-200 px-5 py-3 transition-all dark:border-gray-800"
               >
@@ -140,7 +154,7 @@
                 </div>
                 <SettingSwitch
                   title={$t('show_shared_library_in_main_surfaces')}
-                  bind:checked={library.inTimeline}
+                  checked={library.inTimeline}
                   onToggle={(isChecked) => handleShowInTimelineChanged(library, isChecked)}
                 />
               </div>
@@ -149,7 +163,7 @@
         {/if}
 
         {#if data.myLibraries.length > 0}
-          <div class="flex flex-col gap-2" class:mt-4={data.sharedLibraries.length > 0}>
+          <div class="flex flex-col gap-2" class:mt-4={sharedLibraries.length > 0}>
             {#each data.myLibraries as library (library.id)}
               <div
                 class="flex items-center justify-between gap-4 rounded-lg px-5 py-3 transition-all hover:bg-gray-200 dark:hover:bg-gray-700"
