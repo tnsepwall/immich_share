@@ -547,7 +547,9 @@ export class SearchRepository {
       .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
       .where((eb) => {
         const ownerArm = eb('asset.ownerId', '=', anyUuid(userIds));
-        return sharedLibraryIds.length > 0 ? eb.or([ownerArm, withSharedLibraryAssets(sharedLibraryIds)(eb)]) : ownerArm;
+        return sharedLibraryIds.length > 0
+          ? eb.or([ownerArm, withSharedLibraryAssets(sharedLibraryIds)(eb)])
+          : ownerArm;
       })
       .where('visibility', '=', AssetVisibility.Timeline)
       .where('deletedAt', 'is', null)

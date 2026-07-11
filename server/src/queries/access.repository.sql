@@ -372,6 +372,7 @@ from
   "person"
 where
   "person"."id" in ($1)
+  and "person"."isHidden" = $2
   and exists (
     select
     from
@@ -383,12 +384,12 @@ where
       inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
       and "owner"."deletedAt" is null
       inner join "library_user" on "library_user"."libraryId" = "library"."id"
-      and "library_user"."userId" = $2
-      and "library_user"."inTimeline" = $3
+      and "library_user"."userId" = $3
+      and "library_user"."inTimeline" = $4
     where
       "asset_face"."personId" = "person"."id"
       and "asset_face"."deletedAt" is null
-      and "asset_face"."isVisible" = $4
+      and "asset_face"."isVisible" = $5
       and "asset"."visibility" = 'timeline'
   )
 

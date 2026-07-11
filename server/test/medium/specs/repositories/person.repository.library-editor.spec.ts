@@ -136,7 +136,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       expect(untouchedFace.personId).toBeNull();
     });
 
-    it("should give an old person who lost their feature face a replacement from their remaining faces", async () => {
+    it('should give an old person who lost their feature face a replacement from their remaining faces', async () => {
       const { ctx, sut } = setup();
       const { user: owner } = await ctx.newUser();
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
@@ -196,7 +196,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       await ctx.newAssetFace({ assetId: outsideLibrary.id, personId: person.id });
 
       await expect(sut.updatePersonNameForLibrary(library.id, owner.id, person.id, 'New Name')).resolves.toBe(false);
-      expect((await getPerson(ctx, person.id)).name).toBe('Old Name');
+      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ name: 'Old Name' });
     });
 
     // Regression test for the security review's L2 finding: a face on a TRASHED (soft-deleted) asset outside
@@ -217,7 +217,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       await ctx.newAssetFace({ assetId: trashedOutside.id, personId: person.id });
 
       await expect(sut.updatePersonNameForLibrary(library.id, owner.id, person.id, 'New Name')).resolves.toBe(false);
-      expect((await getPerson(ctx, person.id)).name).toBe('Old Name');
+      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ name: 'Old Name' });
     });
 
     it('should reject a Viewer', async () => {
@@ -267,8 +267,8 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       // left stale, mirroring the existing owner-flow PersonService.createNewFeaturePhoto behavior exactly
       // when getRandomFace finds nothing.
       expect(result).toEqual({ needsFeaturePhoto: [target.id] });
-      expect((await getFace(ctx, movingFace.id)).personId).toBe(target.id);
-      expect((await getPerson(ctx, oldPerson.id)).faceAssetId).toBe(movingFace.id);
+      await expect(getFace(ctx, movingFace.id)).resolves.toMatchObject({ personId: target.id });
+      await expect(getPerson(ctx, oldPerson.id)).resolves.toMatchObject({ faceAssetId: movingFace.id });
     });
 
     it('should reject when a face is not in this library', async () => {
@@ -285,9 +285,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       await ctx.newAssetFace({ assetId: inLibrary.id, personId: target.id });
       const { assetFace: outOfScopeFace } = await ctx.newAssetFace({ assetId: outOfScope.id });
 
-      await expect(
-        sut.assignFacesForLibrary(library.id, owner.id, target.id, [outOfScopeFace.id]),
-      ).resolves.toBeNull();
+      await expect(sut.assignFacesForLibrary(library.id, owner.id, target.id, [outOfScopeFace.id])).resolves.toBeNull();
     });
 
     it('should reject when the target person is not reachable through this library', async () => {
@@ -309,7 +307,14 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
   });
 
   describe('createManualFaceForLibrary', () => {
-    const box = { imageWidth: 100, imageHeight: 100, boundingBoxX1: 1, boundingBoxY1: 1, boundingBoxX2: 10, boundingBoxY2: 10 };
+    const box = {
+      imageWidth: 100,
+      imageHeight: 100,
+      boundingBoxX1: 1,
+      boundingBoxY1: 1,
+      boundingBoxX2: 10,
+      boundingBoxY2: 10,
+    };
 
     it('should create a face on a Timeline asset and set it as the feature photo when the person had none', async () => {
       const { ctx, sut } = setup();
@@ -332,7 +337,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const face = await getFace(ctx, result!.faceId);
       expect(face.assetId).toBe(asset.id);
       expect(face.personId).toBe(person.id);
-      expect((await getPerson(ctx, person.id)).faceAssetId).toBe(result!.faceId);
+      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ faceAssetId: result!.faceId });
     });
 
     // Regression test for the security review's H1 finding: createManualFace previously checked only
@@ -401,9 +406,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { person } = await ctx.newPerson({ ownerId: owner.id });
       await ctx.newAssetFace({ assetId: assetInLib1.id, personId: person.id });
 
-      await expect(
-        sut.createManualFaceForLibrary(library1.id, owner.id, person.id, asset.id, box),
-      ).resolves.toBeNull();
+      await expect(sut.createManualFaceForLibrary(library1.id, owner.id, person.id, asset.id, box)).resolves.toBeNull();
     });
 
     it('should reject when the person is not reachable through this library', async () => {

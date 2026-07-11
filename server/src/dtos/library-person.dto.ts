@@ -180,7 +180,14 @@ export function mapLibraryPerson(person: LibraryPersonRow): LibraryPersonRespons
 
 type LibraryFaceRow = Pick<
   Selectable<AssetFaceTable>,
-  'id' | 'assetId' | 'imageWidth' | 'imageHeight' | 'boundingBoxX1' | 'boundingBoxX2' | 'boundingBoxY1' | 'boundingBoxY2'
+  | 'id'
+  | 'assetId'
+  | 'imageWidth'
+  | 'imageHeight'
+  | 'boundingBoxX1'
+  | 'boundingBoxX2'
+  | 'boundingBoxY1'
+  | 'boundingBoxY2'
 > & {
   person: { id: string; name: string } | null;
 };

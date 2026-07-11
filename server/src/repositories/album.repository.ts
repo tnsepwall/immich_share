@@ -498,15 +498,17 @@ export class AlbumRepository {
   }
 
   private updateThumbnailBuilder(eb: ExpressionBuilder<DB, 'album'>) {
-    return eb
-      .selectFrom('album_asset')
-      .innerJoin('asset', (join) =>
-        join.onRef('album_asset.assetId', '=', 'asset.id').on('asset.deletedAt', 'is', null),
-      )
-      .whereRef('album_asset.albumId', '=', 'album.id')
-      // Automatic thumbnail selection is unscoped to any one viewer, so only durable (non-provenance) assets are
-      // eligible — otherwise the chosen cover could be one only the original library recipient can actually view.
-      .where('album_asset.sourceLibraryId', 'is', null);
+    return (
+      eb
+        .selectFrom('album_asset')
+        .innerJoin('asset', (join) =>
+          join.onRef('album_asset.assetId', '=', 'asset.id').on('asset.deletedAt', 'is', null),
+        )
+        .whereRef('album_asset.albumId', '=', 'album.id')
+        // Automatic thumbnail selection is unscoped to any one viewer, so only durable (non-provenance) assets are
+        // eligible — otherwise the chosen cover could be one only the original library recipient can actually view.
+        .where('album_asset.sourceLibraryId', 'is', null)
+    );
   }
 
   /**
@@ -543,22 +545,20 @@ export class AlbumRepository {
 
   @GenerateSql({ params: [{ sourceAssetId: DummyValue.UUID, targetAssetId: DummyValue.UUID }] })
   async copyAlbums({ sourceAssetId, targetAssetId }: { sourceAssetId: string; targetAssetId: string }) {
-    return this.db
-      .insertInto('album_asset')
-      // Same reason as create()'s album_asset CTE above: without explicit .columns(), the 3rd selected value
-      // (sourceLibraryId) would land in the table's actual 3rd physical column (createdAt) instead.
-      .columns(['albumId', 'assetId', 'sourceLibraryId'])
-      .expression((eb) =>
-        eb
-          .selectFrom('album_asset')
-          .select((eb) => [
-            'album_asset.albumId',
-            eb.val(targetAssetId).as('assetId'),
-            'album_asset.sourceLibraryId',
-          ])
-          .where('album_asset.assetId', '=', sourceAssetId),
-      )
-      .onConflict((oc) => oc.doNothing())
-      .execute();
+    return (
+      this.db
+        .insertInto('album_asset')
+        // Same reason as create()'s album_asset CTE above: without explicit .columns(), the 3rd selected value
+        // (sourceLibraryId) would land in the table's actual 3rd physical column (createdAt) instead.
+        .columns(['albumId', 'assetId', 'sourceLibraryId'])
+        .expression((eb) =>
+          eb
+            .selectFrom('album_asset')
+            .select((eb) => ['album_asset.albumId', eb.val(targetAssetId).as('assetId'), 'album_asset.sourceLibraryId'])
+            .where('album_asset.assetId', '=', sourceAssetId),
+        )
+        .onConflict((oc) => oc.doNothing())
+        .execute()
+    );
   }
 }

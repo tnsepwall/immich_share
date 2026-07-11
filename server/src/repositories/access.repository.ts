@@ -645,9 +645,7 @@ class PersonAccess {
     return this.db
       .selectFrom('asset_face')
       .select('asset_face.id')
-      .innerJoin('asset', (join) =>
-        join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
-      )
+      .innerJoin('asset', (join) => join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null))
       .where('asset_face.id', 'in', [...faceIds])
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', '=', true)
@@ -699,37 +697,43 @@ class PersonAccess {
       return new Set<string>();
     }
 
-    return this.db
-      .selectFrom('person')
-      .select('person.id')
-      .where('person.id', 'in', [...personIds])
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom('asset_face')
-            .innerJoin('asset', (join) =>
-              join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
-            )
-            .innerJoin('library', (join) =>
-              join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
-            )
-            .innerJoin('user as owner', (join) =>
-              join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
-            )
-            .innerJoin('library_user', (join) =>
-              join
-                .onRef('library_user.libraryId', '=', 'library.id')
-                .on('library_user.userId', '=', userId)
-                .on('library_user.inTimeline', '=', true),
-            )
-            .whereRef('asset_face.personId', '=', 'person.id')
-            .where('asset_face.deletedAt', 'is', null)
-            .where('asset_face.isVisible', '=', true)
-            .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
-        ),
-      )
-      .execute()
-      .then((persons) => new Set(persons.map((person) => person.id)));
+    return (
+      this.db
+        .selectFrom('person')
+        .select('person.id')
+        .where('person.id', 'in', [...personIds])
+        // Review finding fix (plan §5.3): a person the OWNER has hidden must be excluded from ALL
+        // sharee-facing surfaces, including this by-id reachability check - otherwise a sharee retains
+        // name/thumbnail/personId-filter access to a hidden person they can no longer see in listings.
+        .where('person.isHidden', '=', false)
+        .where((eb) =>
+          eb.exists(
+            eb
+              .selectFrom('asset_face')
+              .innerJoin('asset', (join) =>
+                join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
+              )
+              .innerJoin('library', (join) =>
+                join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
+              )
+              .innerJoin('user as owner', (join) =>
+                join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+              )
+              .innerJoin('library_user', (join) =>
+                join
+                  .onRef('library_user.libraryId', '=', 'library.id')
+                  .on('library_user.userId', '=', userId)
+                  .on('library_user.inTimeline', '=', true),
+              )
+              .whereRef('asset_face.personId', '=', 'person.id')
+              .where('asset_face.deletedAt', 'is', null)
+              .where('asset_face.isVisible', '=', true)
+              .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+          ),
+        )
+        .execute()
+        .then((persons) => new Set(persons.map((person) => person.id)))
+    );
   }
 
   // Required before an Editor renames a person: true only when the person has at least one (non-deleted-asset)

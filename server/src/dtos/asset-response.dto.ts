@@ -236,8 +236,7 @@ export function mapAsset(entity: MaybeDehydrated<MapAsset>, options: AssetMapOpt
     visibility: entity.visibility,
     duration: entity.duration,
     exifInfo: entity.exifInfo ? mapExif(entity.exifInfo) : undefined,
-    livePhotoVideoId:
-      isSharedLibraryRecipient && !options.sameLibraryLivePhoto ? null : entity.livePhotoVideoId,
+    livePhotoVideoId: isSharedLibraryRecipient && !options.sameLibraryLivePhoto ? null : entity.livePhotoVideoId,
     tags: entity.tags?.map((tag) => mapTag(tag)),
     people: peopleFromFaces(entity.faces),
     checksum: hexOrBufferToBase64(entity.checksum)!,

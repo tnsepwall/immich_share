@@ -77,6 +77,11 @@ export class PersonService extends BaseService {
     // library faces. Simplification: this arm is fetched as one capped, unpaginated batch rather than
     // truly merged into the owner arm's page-by-page pagination - acceptable for a secondary listing
     // surface, but noted here rather than glossed over.
+    //
+    // Review finding fix: the shared batch is APPENDED exactly once - on the final owner page
+    // (hasNextPage=false) - never on every page, since duplicated person ids across pages break the
+    // web People page's keyed {#each} during infinite scroll. `total` still includes the shared count
+    // on EVERY page because the web reads it from page 1 only.
     let sharedPeople: PersonResponseDto[] = [];
     const sharedLibraryIds = await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id);
     if (sharedLibraryIds.length > 0) {
@@ -91,7 +96,7 @@ export class PersonService extends BaseService {
     }
 
     return {
-      people: [...items.map((person) => mapPerson(person)), ...sharedPeople],
+      people: [...items.map((person) => mapPerson(person)), ...(hasNextPage ? [] : sharedPeople)],
       hasNextPage,
       total: total + sharedPeople.length,
       hidden,
@@ -682,7 +687,11 @@ export class PersonService extends BaseService {
   async createFace(auth: AuthDto, dto: AssetFaceCreateDto): Promise<void> {
     await Promise.all([
       this.requireAccess({ auth, permission: Permission.AssetUpdate, ids: [dto.assetId] }),
-      this.requireAccess({ auth, permission: Permission.PersonRead, ids: [dto.personId] }),
+      // Owner-only on purpose (review finding, Phase 5): this is a MUTATION on the person (attaches a
+      // face, mutates face counts/statistics, and can set the person's feature photo via
+      // createNewFeaturePhoto below). Permission.PersonRead is widened to shared-library reachability
+      // and must never gate a write path - PersonUpdate routes to checkOwnerAccess in utils/access.ts.
+      this.requireAccess({ auth, permission: Permission.PersonUpdate, ids: [dto.personId] }),
     ]);
 
     const [asset, person] = await Promise.all([

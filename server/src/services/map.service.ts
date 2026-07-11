@@ -19,9 +19,15 @@ export class MapService extends BaseService {
     // `inTimeline` flag is ignored on the map (whoever is in `userIds` is included), but a shared
     // library's markers are gated by the SAME per-share `inTimeline` flag that governs the main
     // timeline. A client-side toggle (`withSharedLibraries`) double-gates it on top.
-    const libraryIds = options.withSharedLibraries
-      ? await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id)
-      : [];
+    //
+    // Review finding fix: drop the shared-library arm entirely when the caller filters on isFavorite -
+    // the repository ANDs that filter across all arms, so withSharedLibraries+isFavorite would
+    // enumerate exactly which shared assets the OWNER favorited. Same probe class the timeline rejects
+    // and search's dropSharedLibraryProbe() defends against.
+    const libraryIds =
+      options.withSharedLibraries && options.isFavorite === undefined
+        ? await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id)
+        : [];
 
     return this.mapRepository.getMapMarkers(auth.user.id, userIds, albumIds, libraryIds, options);
   }

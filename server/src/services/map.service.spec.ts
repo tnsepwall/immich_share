@@ -5,6 +5,7 @@ import { AuthFactory } from 'test/factories/auth.factory';
 import { PartnerFactory } from 'test/factories/partner.factory';
 import { userStub } from 'test/fixtures/user.stub';
 import { getForPartner } from 'test/mappers';
+import { newUuid } from 'test/small.factory';
 import { newTestService, ServiceMocks } from 'test/utils';
 
 describe(MapService.name, () => {
@@ -93,6 +94,40 @@ describe(MapService.name, () => {
       expect(markers).toHaveLength(1);
       expect(markers[0]).toEqual(marker);
       expect(mocks.album.getAllIds).toHaveBeenCalledWith(auth.user.id);
+    });
+
+    it('should include inTimeline shared-library ids when withSharedLibraries is set', async () => {
+      const auth = AuthFactory.create();
+      const libraryId = newUuid();
+
+      mocks.partner.getAll.mockResolvedValue([]);
+      mocks.library.getInTimelineSharedLibraryIds.mockResolvedValue([libraryId]);
+      mocks.map.getMapMarkers.mockResolvedValue([]);
+
+      await sut.getMapMarkers(auth, { withSharedLibraries: true });
+
+      expect(mocks.library.getInTimelineSharedLibraryIds).toHaveBeenCalledWith(auth.user.id);
+      expect(mocks.map.getMapMarkers).toHaveBeenCalledWith(auth.user.id, [auth.user.id], [], [libraryId], {
+        withSharedLibraries: true,
+      });
+    });
+
+    // Review finding: the repository ANDs the isFavorite filter across every arm, so combining it
+    // with the shared-library arm would enumerate which shared assets the OWNER favorited - the same
+    // probe class the timeline rejects and search's dropSharedLibraryProbe() defends against.
+    it('should drop the shared-library arm when isFavorite is filtered', async () => {
+      const auth = AuthFactory.create();
+
+      mocks.partner.getAll.mockResolvedValue([]);
+      mocks.map.getMapMarkers.mockResolvedValue([]);
+
+      await sut.getMapMarkers(auth, { withSharedLibraries: true, isFavorite: true });
+
+      expect(mocks.library.getInTimelineSharedLibraryIds).not.toHaveBeenCalled();
+      expect(mocks.map.getMapMarkers).toHaveBeenCalledWith(auth.user.id, [auth.user.id], [], [], {
+        withSharedLibraries: true,
+        isFavorite: true,
+      });
     });
   });
 

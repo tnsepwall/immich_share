@@ -143,10 +143,16 @@ Watch for, in order:
 4. Check **Explore** and **Search** (try a metadata search, or a smart/CLIP search if you have it
    enabled) — shared-library assets should appear there too.
 5. Check **Map**: open the map settings (gear icon) and turn on the new **"Include shared library
-   assets"** switch — shared-library photos with GPS data should now show markers.
+   assets"** switch — shared-library photos with GPS data should now show markers. Note: shared
+   libraries participate in the map's *default* view only — turning on "Include archived" or "Only
+   favorites" temporarily drops shared-library markers (and the cluster panel matches), because
+   those filters are owner-private and must never be answerable over another owner's assets.
 6. Try the **People** page and person search — people who appear in the shared library (and nowhere
-   in your own account) should now show up too, with a generic avatar (not the owner's private photo
-   crop) unless the specific photo their thumbnail is cropped from is itself in the shared library.
+   in your own account) should now show up too, with an initials/generic avatar (not the owner's
+   private photo crop) unless the specific photo their thumbnail is cropped from is itself in the
+   shared library. Clicking such a person opens their page showing the shared assets they appear in
+   (without an owner-only asset-count statistic). People the owner has **hidden** never appear to
+   you in any form — list, search, by id, or thumbnail.
 7. Turn the Sharing-page switch back off and confirm all of the above reverts — the assets disappear
    from your main timeline/explore/map/search immediately (no cache to clear).
 8. As the **owner**, confirm nothing about *your* view of your own library changed, and confirm your

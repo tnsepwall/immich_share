@@ -118,7 +118,9 @@ export class AlbumService extends BaseService {
     const remainingAssetIds = requestedAssetIds.filter((assetId) => !assetShareIds.has(assetId));
     // A brand-new album is always owned by its creator, so a shared-library grant is always eligible here.
     const libraryGrants =
-      remainingAssetIds.length > 0 ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds) : new Map<string, string>();
+      remainingAssetIds.length > 0
+        ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds)
+        : new Map<string, string>();
 
     const assets: { assetId: string; sourceLibraryId: string | null }[] = [
       ...[...assetShareIds].map((assetId) => ({ assetId, sourceLibraryId: null })),
@@ -267,7 +269,9 @@ export class AlbumService extends BaseService {
     const assetShareIds = await this.checkAccess({ auth, permission: Permission.AssetShare, ids: dto.assetIds });
     const remainingAssetIds = dto.assetIds.filter((assetId) => !assetShareIds.has(assetId));
     const libraryGrants =
-      remainingAssetIds.length > 0 ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds) : new Map<string, string>();
+      remainingAssetIds.length > 0
+        ? await this.resolveLibraryAlbumGrants(auth, remainingAssetIds)
+        : new Map<string, string>();
 
     if (assetShareIds.size === 0 && libraryGrants.size === 0) {
       results.error = BulkIdErrorReason.NO_PERMISSION;
@@ -437,7 +441,10 @@ export class AlbumService extends BaseService {
       return grants;
     }
 
-    if (auth.apiKey && !isGranted({ requested: [Permission.LibraryAssetAddToAlbum], current: auth.apiKey.permissions })) {
+    if (
+      auth.apiKey &&
+      !isGranted({ requested: [Permission.LibraryAssetAddToAlbum], current: auth.apiKey.permissions })
+    ) {
       return grants;
     }
 

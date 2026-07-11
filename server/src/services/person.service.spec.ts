@@ -87,6 +87,58 @@ describe(PersonService.name, () => {
         withHidden: false,
       });
     });
+
+    // Review finding: the shared-library batch must be appended exactly ONCE across the paginated
+    // response - repeating it on every page duplicates person ids and breaks the web People page's
+    // keyed {#each} during infinite scroll. `total` still counts it on every page (the web reads the
+    // total from page 1 only).
+    it('should not append shared-library persons on a non-final page', async () => {
+      const auth = AuthFactory.create();
+      const ownPerson = PersonFactory.create();
+      const sharedPerson = PersonFactory.create();
+
+      mocks.person.getAllForUser.mockResolvedValue({ items: [ownPerson], hasNextPage: true });
+      mocks.person.getNumberOfPeople.mockResolvedValue({ total: 5, hidden: 0 });
+      mocks.library.getInTimelineSharedLibraryIds.mockResolvedValue([newUuid()]);
+      mocks.user.getMetadata.mockResolvedValue([]);
+      mocks.person.getAllForSharedLibraries.mockResolvedValue({ items: [sharedPerson], hasNextPage: false });
+
+      await expect(sut.getAll(auth, { withHidden: false, page: 1, size: 1 })).resolves.toEqual({
+        hasNextPage: true,
+        total: 6,
+        hidden: 0,
+        people: [expect.objectContaining({ id: ownPerson.id })],
+      });
+    });
+
+    it('should append shared-library persons exactly once, on the final page', async () => {
+      const auth = AuthFactory.create();
+      const ownPerson = PersonFactory.create();
+      const sharedPerson = PersonFactory.create({ birthDate: new Date('1990-01-01'), isFavorite: true });
+
+      mocks.person.getAllForUser.mockResolvedValue({ items: [ownPerson], hasNextPage: false });
+      mocks.person.getNumberOfPeople.mockResolvedValue({ total: 5, hidden: 0 });
+      mocks.library.getInTimelineSharedLibraryIds.mockResolvedValue([newUuid()]);
+      mocks.user.getMetadata.mockResolvedValue([]);
+      mocks.person.getAllForSharedLibraries.mockResolvedValue({ items: [sharedPerson], hasNextPage: false });
+
+      await expect(sut.getAll(auth, { withHidden: false, page: 2, size: 1 })).resolves.toEqual({
+        hasNextPage: false,
+        total: 6,
+        hidden: 0,
+        people: [
+          expect.objectContaining({ id: ownPerson.id }),
+          // redacted for the non-owner
+          expect.objectContaining({
+            id: sharedPerson.id,
+            birthDate: null,
+            thumbnailPath: '',
+            isHidden: false,
+            isFavorite: false,
+          }),
+        ],
+      });
+    });
   });
 
   describe('getById', () => {
@@ -513,6 +565,37 @@ describe(PersonService.name, () => {
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(mocks.person.createAssetFace).not.toHaveBeenCalled();
+    });
+
+    // Review finding: createFace is a mutation (attaches a face, can set the owner's person feature
+    // photo), so the personId guard must be OWNER-only - shared-library reachability (which satisfies
+    // the widened PersonRead) must never be enough, even on the sharee's own asset.
+    it('should reject a person the user does not own even when reachable via a shared library', async () => {
+      const auth = AuthFactory.create();
+      const asset = AssetFactory.create();
+      const person = PersonFactory.create({ faceAssetId: null });
+
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
+      mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.person.checkSharedLibraryPersonAccess.mockResolvedValue(new Set([person.id]));
+
+      await expect(
+        sut.createFace(auth, {
+          assetId: asset.id,
+          personId: person.id,
+          imageHeight: 500,
+          imageWidth: 400,
+          x: 10,
+          y: 20,
+          width: 100,
+          height: 110,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mocks.person.createAssetFace).not.toHaveBeenCalled();
+      expect(mocks.person.update).not.toHaveBeenCalled();
+      // PersonUpdate routes through checkOwnerAccess only - reachability must not even be consulted.
+      expect(mocks.access.person.checkSharedLibraryPersonAccess).not.toHaveBeenCalled();
     });
   });
 

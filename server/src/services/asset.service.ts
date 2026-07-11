@@ -5,7 +5,6 @@ import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { AssetFile } from 'src/database';
 import { OnJob } from 'src/decorators';
 import { AssetResponseDto, SanitizedAssetResponseDto, mapAsset } from 'src/dtos/asset-response.dto';
-import { redactPersonForNonOwner } from 'src/dtos/person.dto';
 import {
   AssetBulkDeleteDto,
   AssetBulkUpdateDto,
@@ -24,6 +23,7 @@ import {
 import { AuthDto } from 'src/dtos/auth.dto';
 import { AssetEditAction, AssetEditActionItem, AssetEditsCreateDto, AssetEditsResponseDto } from 'src/dtos/editing.dto';
 import { AssetOcrResponseDto } from 'src/dtos/ocr.dto';
+import { redactPersonForNonOwner } from 'src/dtos/person.dto';
 import {
   AssetFileType,
   AssetStatus,

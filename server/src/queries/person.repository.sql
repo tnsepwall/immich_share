@@ -254,8 +254,10 @@ from
   inner join "library_user" on "library_user"."libraryId" = "library"."id"
   and "library_user"."userId" = $1
   and "library_user"."inTimeline" = $2
+  inner join "person" on "person"."id" = "asset_face"."personId"
+  and "person"."isHidden" = $3
 where
-  "asset_face"."id" = $3
+  "asset_face"."id" = $4
   and "asset"."visibility" = 'timeline'
 
 -- PersonRepository.getAllWithoutFaces

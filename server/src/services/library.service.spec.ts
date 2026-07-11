@@ -691,7 +691,12 @@ describe(LibraryService.name, () => {
 
       mocks.library.get.mockResolvedValue(library);
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: viewer.id, user: getDehydrated(viewer), role: LibraryUserRole.Viewer }),
+        shareRow({
+          libraryId: library.id,
+          userId: viewer.id,
+          user: getDehydrated(viewer),
+          role: LibraryUserRole.Viewer,
+        }),
       ]);
 
       const result = await sut.get(library.id);
@@ -876,7 +881,12 @@ describe(LibraryService.name, () => {
 
       mocks.library.getAll.mockResolvedValue([library]);
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: editor.id, user: getDehydrated(editor), role: LibraryUserRole.Editor }),
+        shareRow({
+          libraryId: library.id,
+          userId: editor.id,
+          user: getDehydrated(editor),
+          role: LibraryUserRole.Editor,
+        }),
       ]);
 
       const result = await sut.getAll();
@@ -1356,7 +1366,12 @@ describe(LibraryService.name, () => {
 
       mocks.library.getOwned.mockResolvedValue([library]);
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: viewer.id, user: getDehydrated(viewer), role: LibraryUserRole.Viewer }),
+        shareRow({
+          libraryId: library.id,
+          userId: viewer.id,
+          user: getDehydrated(viewer),
+          role: LibraryUserRole.Viewer,
+        }),
       ]);
 
       const result = await sut.getMine(owner);
@@ -1404,16 +1419,23 @@ describe(LibraryService.name, () => {
 
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
       mocks.library.get.mockResolvedValue(library);
-      mocks.library.getSharedUsers
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([
-          shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
-        ]);
+      mocks.library.getSharedUsers.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+        }),
+      ]);
       mocks.user.get.mockResolvedValue(target);
 
-      const result = await sut.addUsers(owner, library.id, { users: [{ userId: target.id, role: LibraryUserRole.Viewer }] });
+      const result = await sut.addUsers(owner, library.id, {
+        users: [{ userId: target.id, role: LibraryUserRole.Viewer }],
+      });
 
-      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [{ userId: target.id, role: LibraryUserRole.Viewer }]);
+      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [
+        { userId: target.id, role: LibraryUserRole.Viewer },
+      ]);
       expect(result).toEqual([{ user: expect.objectContaining({ id: target.id }), role: 'viewer' }]);
     });
 
@@ -1429,7 +1451,9 @@ describe(LibraryService.name, () => {
       await sut.addUsers(admin, library.id, { users: [{ userId: target.id, role: LibraryUserRole.Editor }] });
 
       expect(mocks.access.library.checkOwnerAccess).not.toHaveBeenCalled();
-      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [{ userId: target.id, role: LibraryUserRole.Editor }]);
+      expect(mocks.library.addUsers).toHaveBeenCalledWith(library.id, [
+        { userId: target.id, role: LibraryUserRole.Editor },
+      ]);
     });
 
     it('should reject a non-owner, non-admin caller', async () => {
@@ -1466,7 +1490,12 @@ describe(LibraryService.name, () => {
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
       mocks.library.get.mockResolvedValue(library);
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+        }),
       ]);
 
       await expect(
@@ -1505,7 +1534,12 @@ describe(LibraryService.name, () => {
         role: LibraryUserRole.Editor,
       } as any);
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Editor }),
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Editor,
+        }),
       ]);
 
       const result = await sut.updateUserRole(owner, library.id, target.id, { role: LibraryUserRole.Editor });
@@ -1537,7 +1571,12 @@ describe(LibraryService.name, () => {
       mocks.library.get.mockResolvedValue(library);
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
       mocks.library.getSharedUsers.mockResolvedValue([
-        shareRow({ libraryId: library.id, userId: target.id, user: getDehydrated(target), role: LibraryUserRole.Viewer }),
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+        }),
       ]);
 
       await sut.removeUser(owner, library.id, target.id);
