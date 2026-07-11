@@ -14,6 +14,7 @@ import {
   LibraryStatsResponseDto,
   LibraryUserResponseDto,
   LibraryUsersDto,
+  LibraryUserSelfUpdateDto,
   LibraryUserUpdateDto,
   mapLibrary,
   mapLibraryUser,
@@ -294,6 +295,28 @@ export class LibraryService extends BaseService {
     }
 
     return mapLibraryUser(user);
+  }
+
+  // Phase 5: a recipient's own opt-in to seeing this shared library in their main timeline/explore/
+  // map/search. Deliberately separate from updateUserRole above - the permission check
+  // (Permission.LibraryUserSelfUpdate) only ever matches the caller's own share row (see
+  // access.repository.ts#checkSelfShareAccess), so there is no owner/admin branch here: an owner has
+  // no library_user row of their own and has no business setting a recipient's personal preference.
+  async updateMyShare(auth: AuthDto, id: string, dto: LibraryUserSelfUpdateDto): Promise<SharedLibraryResponseDto> {
+    await this.requireAccess({ auth, permission: Permission.LibraryUserSelfUpdate, ids: [id] });
+
+    const updated = await this.libraryRepository.updateUser(id, auth.user.id, { inTimeline: dto.inTimeline });
+    if (!updated) {
+      throw new BadRequestException('Library is not shared with user');
+    }
+
+    const libraries = await this.libraryRepository.getSharedWithUser(auth.user.id);
+    const library = libraries.find((library) => library.id === id);
+    if (!library) {
+      throw new BadRequestException('Library is not shared with user');
+    }
+
+    return mapSharedLibrary(library);
   }
 
   async removeUser(auth: AuthDto, id: string, userId: string | 'me'): Promise<void> {

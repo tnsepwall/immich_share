@@ -189,6 +189,7 @@ export enum Permission {
   LibraryDelete = 'library.delete',
   LibraryStatistics = 'library.statistics',
   LibraryShare = 'library.share',
+  LibraryUserSelfUpdate = 'libraryUser.selfUpdate',
 
   LibraryAssetAddToAlbum = 'libraryAsset.addToAlbum',
   LibraryAssetUpdate = 'libraryAsset.update',

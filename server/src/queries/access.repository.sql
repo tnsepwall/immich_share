@@ -82,8 +82,8 @@ select
   "asset"."livePhotoVideoId"
 from
   "album"
-  inner join "album_asset" as "albumAssets" on "album"."id" = "albumAssets"."albumId"
-  inner join "asset" on "asset"."id" = "albumAssets"."assetId"
+  inner join "album_asset" on "album"."id" = "album_asset"."albumId"
+  inner join "asset" on "asset"."id" = "album_asset"."assetId"
   and "asset"."deletedAt" is null
   left join "album_user" as "albumUsers" on "albumUsers"."albumId" = "album"."id"
   left join "user" on "user"."id" = "albumUsers"."userId"
@@ -96,6 +96,40 @@ where
   )
   and "user"."id" = $2
   and "album"."deletedAt" is null
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $3
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $4
+          or "library_user"."userId" is not null
+        )
+    )
+  )
+
+-- AccessRepository.asset.checkLibraryAssetScope
+select
+  "asset"."id"
+from
+  "asset"
+where
+  "asset"."libraryId" = $1
+  and "asset"."deletedAt" is null
+  and "asset"."visibility" = 'timeline'
+  and "asset"."id" in ($2)
 
 -- AccessRepository.asset.checkOwnerAccess
 select
@@ -124,6 +158,41 @@ where
   )
   and "asset"."id" in ($2)
 
+-- AccessRepository.asset.checkSharedLibraryAccess
+select
+  "asset"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+  inner join "asset" on "asset"."libraryId" = "library"."id"
+  and "asset"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and (
+    "asset"."visibility" = 'timeline'
+    or "asset"."visibility" = 'hidden'
+  )
+  and "asset"."id" in ($2)
+
+-- AccessRepository.asset.checkSharedLibraryAlbumAddAccess
+select
+  "asset"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+  inner join "asset" on "asset"."libraryId" = "library"."id"
+  and "asset"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and "asset"."visibility" = 'timeline'
+  and "asset"."id" in ($2)
+
 -- AccessRepository.asset.checkSharedLinkAccess
 select
   "asset"."id" as "assetId",
@@ -142,6 +211,10 @@ from
   and "albumAssets"."deletedAt" is null
 where
   "shared_link"."id" = $1
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or false
+  )
   and array[
     "asset"."id",
     "asset"."livePhotoVideoId",
@@ -167,6 +240,56 @@ where
   "asset"."duplicateId" in ($1)
   and "asset"."ownerId" = $2
   and "asset"."deletedAt" is null
+
+-- AccessRepository.library.checkEditorAccess
+select
+  "library"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."libraryId" in ($1)
+  and "library_user"."userId" = $2
+  and "library_user"."role" = 'editor'
+
+-- AccessRepository.library.checkOwnerAccess
+select
+  "library"."id"
+from
+  "library"
+where
+  "library"."id" in ($1)
+  and "library"."ownerId" = $2
+  and "library"."deletedAt" is null
+
+-- AccessRepository.library.checkSharedAccess
+select
+  "library"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."libraryId" in ($1)
+  and "library_user"."userId" = $2
+
+-- AccessRepository.library.checkSelfShareAccess
+select
+  "library"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."libraryId" in ($1)
+  and "library_user"."userId" = $2
 
 -- AccessRepository.memory.checkOwnerAccess
 select
@@ -206,6 +329,88 @@ from
 where
   "asset_face"."id" in ($1)
   and "asset"."ownerId" = $2
+
+-- AccessRepository.person.checkLibraryFaceScope
+select
+  "asset_face"."id"
+from
+  "asset_face"
+  inner join "asset" on "asset"."id" = "asset_face"."assetId"
+  and "asset"."deletedAt" is null
+where
+  "asset_face"."id" in ($1)
+  and "asset_face"."deletedAt" is null
+  and "asset_face"."isVisible" = $2
+  and "asset"."libraryId" = $3
+  and "asset"."visibility" = 'timeline'
+
+-- AccessRepository.person.checkLibraryPersonScope
+select
+  "person"."id"
+from
+  "person"
+where
+  "person"."id" in ($1)
+  and exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."deletedAt" is null
+    where
+      "asset_face"."personId" = "person"."id"
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $2
+      and "asset"."libraryId" = $3
+      and "asset"."visibility" = 'timeline'
+  )
+
+-- AccessRepository.person.checkSharedLibraryPersonAccess
+select
+  "person"."id"
+from
+  "person"
+where
+  "person"."id" in ($1)
+  and exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."deletedAt" is null
+      inner join "library" on "library"."id" = "asset"."libraryId"
+      and "library"."deletedAt" is null
+      inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+      and "owner"."deletedAt" is null
+      inner join "library_user" on "library_user"."libraryId" = "library"."id"
+      and "library_user"."userId" = $2
+      and "library_user"."inTimeline" = $3
+    where
+      "asset_face"."personId" = "person"."id"
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $4
+      and "asset"."visibility" = 'timeline'
+  )
+
+-- AccessRepository.person.checkPersonExclusiveToLibrary
+select
+  count(*) filter (
+    where
+      "asset"."libraryId" = $1
+  ) as "insideCount",
+  count(*) filter (
+    where
+      (
+        "asset"."libraryId" is null
+        or "asset"."libraryId" != $2
+      )
+  ) as "outsideCount"
+from
+  "asset_face"
+  inner join "asset" on "asset"."id" = "asset_face"."assetId"
+where
+  "asset_face"."personId" = $3
+  and "asset_face"."deletedAt" is null
 
 -- AccessRepository.partner.checkUpdateAccess
 select

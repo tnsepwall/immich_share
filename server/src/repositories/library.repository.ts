@@ -8,6 +8,7 @@ import { LibraryStatsResponseDto } from 'src/dtos/library.dto';
 import { AssetType, AssetVisibility, LibraryUserRole } from 'src/enum';
 import { DB } from 'src/schema';
 import { LibraryTable } from 'src/schema/tables/library.table';
+import { LibraryUserTable } from 'src/schema/tables/library-user.table';
 
 export enum AssetSyncResult {
   DO_NOTHING,
@@ -181,6 +182,20 @@ export class LibraryRepository {
       .executeTakeFirst();
   }
 
+  // Sharee's own self-service update (currently just `inTimeline`) - deliberately separate from
+  // updateUserRole, which is owner/admin-only. The caller (LibraryService.updateMyShare) always pins
+  // userId to auth.user.id; this method has no other authorization opinion of its own.
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID, { inTimeline: true }] })
+  updateUser(libraryId: string, userId: string, update: Updateable<LibraryUserTable>) {
+    return this.db
+      .updateTable('library_user')
+      .set(update)
+      .where('libraryId', '=', libraryId)
+      .where('userId', '=', userId)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
   async removeUser(libraryId: string, userId: string) {
     await this.db.deleteFrom('library_user').where('libraryId', '=', libraryId).where('userId', '=', userId).execute();
@@ -209,11 +224,34 @@ export class LibraryRepository {
       )
       .selectAll('library')
       .select('library_user.role')
+      .select('library_user.inTimeline')
       .select(withLibraryOwner)
       .select(withRecipientAssetCount)
       .$narrowType<{ owner: NotNull }>()
       .where('library_user.userId', '=', userId)
       .orderBy('library.createdAt', 'asc')
       .execute();
+  }
+
+  // Phase 5: the set of library ids the caller has opted into seeing in their main timeline/
+  // explore/map/search (library_user.inTimeline = true), scoped to active (non-deleted) libraries
+  // with a non-deleted owner - same live-share join shape as getSharedWithUser. Resolved fresh per
+  // request, never cached, so a toggle change or share revocation takes effect on the very next
+  // call (mirrors getMyPartnerIds).
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getInTimelineSharedLibraryIds(userId: string): Promise<string[]> {
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select('library.id')
+      .where('library_user.userId', '=', userId)
+      .where('library_user.inTimeline', '=', true)
+      .execute()
+      .then((rows) => rows.map((row) => row.id));
   }
 }

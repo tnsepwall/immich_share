@@ -63,3 +63,132 @@ from
   "library"
 where
   "library"."id" = $1
+
+-- LibraryRepository.getSharedUsers
+select
+  "library_user".*,
+  (
+    select
+      to_json(obj)
+    from
+      (
+        select
+          "id",
+          "name",
+          "email",
+          "avatarColor",
+          "profileImagePath",
+          "profileChangedAt"
+        from
+          "user"
+        where
+          "user"."id" = "library_user"."userId"
+      ) as obj
+  ) as "user"
+from
+  "library_user"
+  inner join "user" on "user"."id" = "library_user"."userId"
+  and "user"."deletedAt" is null
+where
+  "library_user"."libraryId" = $1
+
+-- LibraryRepository.addUsers
+insert into
+  "library_user" ("libraryId", "userId", "role")
+values
+  ($1, $2, $3)
+on conflict ("libraryId", "userId") do nothing
+
+-- LibraryRepository.updateUserRole
+update "library_user"
+set
+  "role" = $1
+where
+  "libraryId" = $2
+  and "userId" = $3
+returning
+  *
+
+-- LibraryRepository.updateUser
+update "library_user"
+set
+  "inTimeline" = $1
+where
+  "libraryId" = $2
+  and "userId" = $3
+returning
+  *
+
+-- LibraryRepository.removeUser
+delete from "library_user"
+where
+  "libraryId" = $1
+  and "userId" = $2
+
+-- LibraryRepository.getOwned
+select
+  "library".*
+from
+  "library"
+where
+  "library"."ownerId" = $1
+  and "library"."deletedAt" is null
+order by
+  "createdAt" asc
+
+-- LibraryRepository.getSharedWithUser
+select
+  "library".*,
+  "library_user"."role",
+  "library_user"."inTimeline",
+  (
+    select
+      to_json(obj)
+    from
+      (
+        select
+          "id",
+          "name",
+          "email",
+          "avatarColor",
+          "profileImagePath",
+          "profileChangedAt"
+        from
+          "user"
+        where
+          "user"."id" = "library"."ownerId"
+      ) as obj
+  ) as "owner",
+  (
+    select
+      count(*) as "count"
+    from
+      "asset"
+    where
+      "asset"."libraryId" = "library"."id"
+      and "asset"."deletedAt" is null
+      and "asset"."visibility" = 'timeline'
+  ) as "assetCount"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+order by
+  "library"."createdAt" asc
+
+-- LibraryRepository.getInTimelineSharedLibraryIds
+select
+  "library"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and "library_user"."inTimeline" = $2

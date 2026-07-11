@@ -545,6 +545,32 @@ class LibraryAccess {
       .execute()
       .then((libraries) => new Set(libraries.map((library) => library.id)));
   }
+
+  // Backs Permission.LibraryUserSelfUpdate (PUT /libraries/:id/users/me) - a recipient managing
+  // their OWN `inTimeline` preference on their own share row. Same live-share join shape as
+  // checkSharedAccess (any role qualifies - Viewer and Editor may both opt into the main timeline),
+  // kept as its own method since it backs a distinct permission with its own authorization story.
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSelfShareAccess(userId: string, libraryIds: Set<string>) {
+    if (libraryIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select('library.id')
+      .where('library_user.libraryId', 'in', [...libraryIds])
+      .where('library_user.userId', '=', userId)
+      .execute()
+      .then((libraries) => new Set(libraries.map((library) => library.id)));
+  }
 }
 
 class MemoryAccess {
@@ -653,6 +679,52 @@ class PersonAccess {
             .where('asset_face.deletedAt', 'is', null)
             .where('asset_face.isVisible', '=', true)
             .where('asset.libraryId', '=', libraryId)
+            .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+        ),
+      )
+      .execute()
+      .then((persons) => new Set(persons.map((person) => person.id)));
+  }
+
+  // Phase 5 (§5.1): general (not single-library-scoped) reachability check backing the SPLIT
+  // Permission.PersonRead case in utils/access.ts - a person counts as reachable for a caller when
+  // they have at least one visible, non-deleted face on a non-deleted Timeline asset in a library
+  // that's shared with the caller AND has `library_user.inTimeline = true` (the same flag that gates
+  // the main timeline/explore/map/search widening - reachability alone is not enough, matching the
+  // dedicated-library-editor's checkLibraryPersonScope shape but without pinning to one library id).
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryPersonAccess(userId: string, personIds: Set<string>) {
+    if (personIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('person')
+      .select('person.id')
+      .where('person.id', 'in', [...personIds])
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('asset_face')
+            .innerJoin('asset', (join) =>
+              join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
+            )
+            .innerJoin('library', (join) =>
+              join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
+            )
+            .innerJoin('user as owner', (join) =>
+              join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+            )
+            .innerJoin('library_user', (join) =>
+              join
+                .onRef('library_user.libraryId', '=', 'library.id')
+                .on('library_user.userId', '=', userId)
+                .on('library_user.inTimeline', '=', true),
+            )
+            .whereRef('asset_face.personId', '=', 'person.id')
+            .where('asset_face.deletedAt', 'is', null)
+            .where('asset_face.isVisible', '=', true)
             .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
         ),
       )
