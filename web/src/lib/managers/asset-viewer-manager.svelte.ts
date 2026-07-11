@@ -195,6 +195,18 @@ class AssetViewerManager extends BaseEventManager<Events> {
     this.isShowDetailPanel = !this.isShowDetailPanel;
   }
 
+  /**
+   * Unlike `toggleDetailPanel`, always opens (never closes) the panel - used by the shared-library
+   * Editor's explicit "Edit info" action (AssetViewerNavBar.svelte) so it never accidentally closes
+   * a panel the Editor already has open. Deliberately not the default behavior for anyone else:
+   * `isShowDetailPanel` is a single localStorage flag shared across every route (see the class doc
+   * above), so nothing auto-opens it - this is only ever invoked from an explicit user click.
+   */
+  openDetailPanel() {
+    this.closeActivityPanel();
+    this.isShowDetailPanel = true;
+  }
+
   closeDetailPanel() {
     this.isShowDetailPanel = false;
   }
