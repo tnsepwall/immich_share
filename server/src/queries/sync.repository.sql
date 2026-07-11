@@ -90,6 +90,7 @@ where
   and "album_asset"."updateId" <= $4
   and "album_asset"."updateId" > $5
   and "album_asset"."albumId" = $6
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 
@@ -127,6 +128,7 @@ where
   "asset"."updateId" < $3
   and "asset"."updateId" > $4
   and "album_asset"."updateId" <= $5
+  and "album_asset"."sourceLibraryId" is null
   and "album_user"."userId" = $6
 order by
   "asset"."updateId" asc
@@ -165,6 +167,7 @@ where
   "album_asset"."updateId" < $3
   and "album_asset"."updateId" > $4
   and "album_user"."userId" = $5
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 
@@ -204,6 +207,7 @@ where
   and "album_asset"."updateId" <= $2
   and "album_asset"."updateId" > $3
   and "album_asset"."albumId" = $4
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 
@@ -243,6 +247,7 @@ where
   "asset_exif"."updateId" < $1
   and "asset_exif"."updateId" > $2
   and "album_asset"."updateId" <= $3
+  and "album_asset"."sourceLibraryId" is null
   and "album_user"."userId" = $4
 order by
   "asset_exif"."updateId" asc
@@ -284,6 +289,7 @@ where
   "album_asset"."updateId" < $1
   and "album_asset"."updateId" > $2
   and "album_user"."userId" = $3
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 
@@ -299,6 +305,7 @@ where
   and "album_asset"."updateId" <= $2
   and "album_asset"."updateId" > $3
   and "album_asset"."albumId" = $4
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 
@@ -335,6 +342,7 @@ where
   "album_asset"."updateId" < $1
   and "album_asset"."updateId" > $2
   and "album_user"."userId" = $3
+  and "album_asset"."sourceLibraryId" is null
 order by
   "album_asset"."updateId" asc
 

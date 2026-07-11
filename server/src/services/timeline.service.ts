@@ -34,6 +34,8 @@ export class TimelineService extends BaseService {
     const { userId, ...options } = dto;
     let userIds: string[] | undefined = undefined;
 
+    let sharedLibraryIds: string[] | undefined;
+
     if (dto.libraryId && library) {
       userIds = [library.ownerId];
     } else if (userId) {
@@ -46,11 +48,18 @@ export class TimelineService extends BaseService {
         });
         userIds.push(...partnerIds);
       }
+      // Phase 5: shared-library assets are surfaced through a dedicated OR-branch on asset.libraryId
+      // (asset.repository.ts), never by adding the owner's userId here - that would leak the owner's
+      // uploads and every other library they have. Only meaningful on this main-timeline path; the
+      // dedicated libraryId route above already has its own, narrower access model.
+      if (dto.withSharedLibraries) {
+        sharedLibraryIds = await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id);
+      }
     }
 
     const requestedBy = dto.albumId ? (auth.sharedLink ? null : auth.user.id) : undefined;
 
-    return { ...options, userIds, requestedBy };
+    return { ...options, userIds, sharedLibraryIds, requestedBy };
   }
 
   // Returns the loaded library when `dto.libraryId` is set, so callers don't re-fetch it in buildTimeBucketOptions.
@@ -104,11 +113,19 @@ export class TimelineService extends BaseService {
       await this.requireAccess({ auth, permission: Permission.TagRead, ids: [dto.tagId] });
     }
 
+    // Phase 5 (§5.8): personId is an unauthorized filter today, bounded only by the caller's own
+    // result scope - safe while that scope was owner+partner only, but now that shared-library assets
+    // can enter scope via withSharedLibraries, an explicitly-supplied person id becomes a probing
+    // oracle. Reject an id the caller can't read.
+    if (dto.personId) {
+      await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [dto.personId] });
+    }
+
     if (auth.sharedLink && !auth.sharedLink.showExif) {
       dto.withCoordinates = false;
     }
 
-    if (dto.withPartners) {
+    if (dto.withPartners || dto.withSharedLibraries) {
       const requestedLocked = dto.visibility === AssetVisibility.Locked;
       const requestedArchived = dto.visibility === AssetVisibility.Archive || dto.visibility === undefined;
       const requestedFavorite = dto.isFavorite === true || dto.isFavorite === false;
@@ -116,7 +133,7 @@ export class TimelineService extends BaseService {
 
       if (requestedLocked || requestedArchived || requestedFavorite || requestedTrash) {
         throw new BadRequestException(
-          'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+          'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
         );
       }
     }

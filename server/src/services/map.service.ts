@@ -15,7 +15,15 @@ export class MapService extends BaseService {
 
     const albumIds = options.withSharedAlbums ? await this.albumRepository.getAllIds(auth.user.id) : [];
 
-    return this.mapRepository.getMapMarkers(auth.user.id, userIds, albumIds, options);
+    // Phase 5 (§4): deliberate deviation from the partner map semantics above - a partner's
+    // `inTimeline` flag is ignored on the map (whoever is in `userIds` is included), but a shared
+    // library's markers are gated by the SAME per-share `inTimeline` flag that governs the main
+    // timeline. A client-side toggle (`withSharedLibraries`) double-gates it on top.
+    const libraryIds = options.withSharedLibraries
+      ? await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id)
+      : [];
+
+    return this.mapRepository.getMapMarkers(auth.user.id, userIds, albumIds, libraryIds, options);
   }
 
   async reverseGeocode(dto: MapReverseGeocodeDto) {

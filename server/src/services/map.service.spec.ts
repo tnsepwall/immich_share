@@ -62,6 +62,7 @@ describe(MapService.name, () => {
         auth.user.id,
         [auth.user.id, partner.sharedById],
         expect.arrayContaining([]),
+        [],
         { withPartners: true },
       );
       expect(markers).toHaveLength(1);

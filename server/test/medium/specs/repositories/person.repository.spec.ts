@@ -1,5 +1,5 @@
 import { Kysely } from 'kysely';
-import { AssetFileType, AssetVisibility } from 'src/enum';
+import { AssetFileType, AssetVisibility, LibraryUserRole } from 'src/enum';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PersonRepository } from 'src/repositories/person.repository';
 import { DB } from 'src/schema';
@@ -29,6 +29,17 @@ const newLibrary = async (ctx: MediumTestContext, dto: { ownerId: string }) => {
   };
   await ctx.database.insertInto('library').values(library).execute();
   return { library };
+};
+
+const newLibraryUser = async (
+  ctx: MediumTestContext,
+  dto: { libraryId: string; userId: string; role: LibraryUserRole; inTimeline?: boolean },
+) => {
+  await ctx.database
+    .insertInto('library_user')
+    .values({ inTimeline: false, ...dto })
+    .execute();
+  return { libraryUser: dto };
 };
 
 beforeAll(async () => {
@@ -261,6 +272,167 @@ describe(PersonRepository.name, () => {
       const result = await sut.getFacesForLibraryAsset(library.id, asset.id);
 
       expect(result).toEqual([expect.objectContaining({ person: null })]);
+    });
+  });
+
+  describe('getAllForSharedLibraries (Phase 5)', () => {
+    it('should return empty when no shared library ids are given', async () => {
+      const { sut } = setup();
+      await expect(sut.getAllForSharedLibraries([], { take: 500, skip: 0 }, 3)).resolves.toEqual({
+        items: [],
+        hasNextPage: false,
+      });
+    });
+
+    it('should exclude a hidden person', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id, isHidden: true, name: 'Hidden Person' });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      const result = await sut.getAllForSharedLibraries([library.id], { take: 500, skip: 0 }, 3);
+      expect(result.items).toEqual([]);
+    });
+
+    it('should count minimumFaces using ONLY in-shared-library faces', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset: inLibrary } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      // Three more faces on assets OUTSIDE the shared library - must not count toward minimumFaces.
+      const { person } = await ctx.newPerson({ ownerId: owner.id, name: '' });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
+      for (let i = 0; i < 3; i++) {
+        const { asset: outside } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
+        await ctx.newAssetFace({ assetId: outside.id, personId: person.id });
+      }
+
+      const result = await sut.getAllForSharedLibraries([library.id], { take: 500, skip: 0 }, 3);
+      // Only 1 in-library face and an empty name - below the minimumFaces=3 threshold, so excluded
+      // even though the person has 4 faces globally.
+      expect(result.items.map((p) => p.id)).not.toContain(person.id);
+    });
+
+    it('should include a named person with just one in-library face regardless of minimumFaces', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Named Person' });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      const result = await sut.getAllForSharedLibraries([library.id], { take: 500, skip: 0 }, 3);
+      expect(result.items.map((p) => p.id)).toEqual([person.id]);
+    });
+  });
+
+  describe('getByNameWithSharedLibraries (Phase 5)', () => {
+    it("should find the caller's own person by name", async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Alice Smith' });
+
+      const result = await sut.getByNameWithSharedLibraries(owner.id, [], 'Alice', { withHidden: false });
+      expect(result.map((p) => p.id)).toEqual([person.id]);
+    });
+
+    it('should find a person reachable via a shared library, excluding hidden persons', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person: visible } = await ctx.newPerson({ ownerId: owner.id, name: 'Bob Jones' });
+      const { person: hidden } = await ctx.newPerson({ ownerId: owner.id, name: 'Bobby Hidden', isHidden: true });
+      await ctx.newAssetFace({ assetId: asset.id, personId: visible.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: hidden.id });
+
+      const result = await sut.getByNameWithSharedLibraries(sharee.id, [library.id], 'Bob', { withHidden: false });
+      expect(result.map((p) => p.id)).toEqual([visible.id]);
+    });
+
+    it('should not find a stranger person with no shared library at all', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: stranger } = await ctx.newUser();
+      await ctx.newPerson({ ownerId: owner.id, name: 'Charlie Brown' });
+
+      const result = await sut.getByNameWithSharedLibraries(stranger.id, [], 'Charlie', { withHidden: false });
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('isFeatureFaceInSharedLibrary (Phase 5)', () => {
+    it('should return true when the feature face is on an inTimeline-shared-library asset', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: true });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+
+      await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(true);
+    });
+
+    it('should return false when the feature face is on an asset from an UNSHARED library', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library: sharedLibrary } = await newLibrary(ctx, { ownerId: owner.id });
+      const { library: otherLibrary } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: sharedLibrary.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: otherLibrary.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+
+      await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(false);
+    });
+
+    it('should return false when inTimeline=false even though the library is shared', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: false });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+
+      await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(false);
     });
   });
 });

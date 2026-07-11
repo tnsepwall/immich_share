@@ -28,6 +28,7 @@ describe(PersonService.name, () => {
 
   beforeEach(() => {
     ({ sut, mocks } = newTestService(PersonService));
+    mocks.library.getInTimelineSharedLibraryIds.mockResolvedValue([]);
   });
 
   it('should be defined', () => {
@@ -149,7 +150,7 @@ describe(PersonService.name, () => {
 
     it('should serve the thumbnail', async () => {
       const auth = AuthFactory.create();
-      const person = PersonFactory.create();
+      const person = PersonFactory.create({ ownerId: auth.user.id });
 
       mocks.person.getById.mockResolvedValue(person);
       mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set([person.id]));
@@ -161,6 +162,38 @@ describe(PersonService.name, () => {
         }),
       );
       expect(mocks.access.person.checkOwnerAccess).toHaveBeenCalledWith(auth.user.id, new Set([person.id]));
+    });
+
+    it('should serve a non-owned person thumbnail when the feature face is in a shared library (§5.6)', async () => {
+      const auth = AuthFactory.create();
+      const person = PersonFactory.create({ faceAssetId: newUuid() });
+
+      mocks.person.getById.mockResolvedValue(person);
+      mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.person.checkSharedLibraryPersonAccess.mockResolvedValue(new Set([person.id]));
+      mocks.person.isFeatureFaceInSharedLibrary.mockResolvedValue(true);
+
+      await expect(sut.getThumbnail(auth, person.id)).resolves.toEqual(
+        new ImmichFileResponse({
+          path: person.thumbnailPath,
+          contentType: 'image/jpeg',
+          cacheControl: CacheControl.PrivateWithoutCache,
+        }),
+      );
+      expect(mocks.person.isFeatureFaceInSharedLibrary).toHaveBeenCalledWith(auth.user.id, person.faceAssetId);
+    });
+
+    it('should reject a non-owned person thumbnail when the feature face is NOT in a shared library (§5.6)', async () => {
+      const auth = AuthFactory.create();
+      const person = PersonFactory.create({ faceAssetId: newUuid() });
+
+      mocks.person.getById.mockResolvedValue(person);
+      mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.person.checkSharedLibraryPersonAccess.mockResolvedValue(new Set([person.id]));
+      mocks.person.isFeatureFaceInSharedLibrary.mockResolvedValue(false);
+
+      await expect(sut.getThumbnail(auth, person.id)).rejects.toThrow();
+      expect(mocks.storage.createReadStream).not.toHaveBeenCalled();
     });
   });
 
@@ -358,7 +391,12 @@ describe(PersonService.name, () => {
       const asset = AssetFactory.from({ id: face.assetId }).exif().build();
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([asset.id]));
       mocks.person.getFaces.mockResolvedValue([getForAssetFace(face)]);
-      mocks.asset.getForFaces.mockResolvedValue({ edits: [], ...asset.exifInfo });
+      mocks.asset.getForFaces.mockResolvedValue({
+        ownerId: auth.user.id,
+        libraryId: null,
+        edits: [],
+        ...asset.exifInfo,
+      });
       await expect(sut.getFacesById(auth, { id: face.assetId })).resolves.toStrictEqual([
         mapFaces(getForAssetFace(face), auth),
       ]);

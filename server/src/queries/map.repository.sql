@@ -17,6 +17,29 @@ from
 where
   "asset"."deletedAt" is null
   and "album_asset"."albumId" = $1
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $2
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $3
+          or "library_user"."userId" is not null
+        )
+    )
+  )
 order by
   "fileCreatedAt" desc
 
@@ -45,7 +68,31 @@ where
       where
         "asset"."id" = "album_asset"."assetId"
         and "album_asset"."albumId" in ($3)
+        and (
+          "album_asset"."sourceLibraryId" is null
+          or exists (
+            select
+            from
+              "asset"
+              inner join "library" on "library"."id" = "asset"."libraryId"
+              and "library"."deletedAt" is null
+              inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+              and "owner"."deletedAt" is null
+              left join "library_user" on "library_user"."libraryId" = "library"."id"
+              and "library_user"."userId" = $4
+            where
+              "asset"."id" = "album_asset"."assetId"
+              and "library"."id" = "album_asset"."sourceLibraryId"
+              and "asset"."deletedAt" is null
+              and "asset"."visibility" = 'timeline'
+              and (
+                "library"."ownerId" = $5
+                or "library_user"."userId" is not null
+              )
+          )
+        )
     )
+    or "asset"."libraryId" in ($6)
   )
 order by
   "fileCreatedAt" desc

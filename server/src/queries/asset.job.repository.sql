@@ -360,9 +360,19 @@ from
 where
   "asset"."id" = $3
 
--- AssetJobRepository.getLockedPropertiesForMetadataExtraction
+-- AssetJobRepository.getSidecarWriteProperties
 select
-  "asset_exif"."lockedProperties"
+  "asset_exif"."sidecarWriteProperties"
+from
+  "asset_exif"
+where
+  "asset_exif"."assetId" = $1
+
+-- AssetJobRepository.getLockedDatesForMetadataExtraction
+select
+  "lockedProperties",
+  "dateTimeOriginal",
+  "timeZone"
 from
   "asset_exif"
 where

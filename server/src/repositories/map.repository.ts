@@ -80,11 +80,12 @@ export class MapRepository {
       .execute();
   }
 
-  @GenerateSql({ params: [DummyValue.UUID, [DummyValue.UUID], [DummyValue.UUID]] })
+  @GenerateSql({ params: [DummyValue.UUID, [DummyValue.UUID], [DummyValue.UUID], [DummyValue.UUID]] })
   getMapMarkers(
     authUserId: string,
     ownerIds: string[],
     albumIds: string[],
+    libraryIds: string[],
     { isArchived, isFavorite, fileCreatedAfter, fileCreatedBefore }: MapMarkerSearchOptions = {},
   ) {
     return this.mapMarkersQuery()
@@ -119,6 +120,13 @@ export class MapRepository {
                 .where(withAlbumAssetProvenance(authUserId)),
             ),
           );
+        }
+
+        if (libraryIds.length > 0) {
+          // Phase 5 (§4.3): the visibility guard above already pins non-owner content to Timeline (its
+          // isArchived=true widening is scoped to authUserId only), and the base query already requires
+          // deletedAt is null - so this arm needs no additional clamp of its own here.
+          expression.push(eb('asset.libraryId', 'in', libraryIds));
         }
 
         return eb.or(expression);

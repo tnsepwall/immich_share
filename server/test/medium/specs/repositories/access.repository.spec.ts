@@ -33,9 +33,12 @@ const newLibrary = async (ctx: MediumTestContext, dto: { ownerId: string }) => {
 
 const newLibraryUser = async (
   ctx: MediumTestContext,
-  dto: { libraryId: string; userId: string; role: LibraryUserRole },
+  dto: { libraryId: string; userId: string; role: LibraryUserRole; inTimeline?: boolean },
 ) => {
-  await ctx.database.insertInto('library_user').values(dto).execute();
+  await ctx.database
+    .insertInto('library_user')
+    .values({ inTimeline: false, ...dto })
+    .execute();
   return { libraryUser: dto };
 };
 
@@ -461,6 +464,130 @@ describe(AccessRepository.name, () => {
         .execute();
 
       await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.id)).resolves.toBe(true);
+    });
+  });
+
+  describe('person.checkSharedLibraryPersonAccess (Phase 5)', () => {
+    it('should return an empty set for empty input', async () => {
+      const { sut } = setup();
+      await expect(sut.person.checkSharedLibraryPersonAccess(factory.uuid(), new Set())).resolves.toEqual(new Set());
+    });
+
+    it('should return a person reachable via an inTimeline=true share', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: true });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
+        new Set([person.id]),
+      );
+    });
+
+    it('should exclude a person reachable only via an inTimeline=false share', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: false });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
+        new Set(),
+      );
+    });
+
+    it('should exclude a person reachable through a DIFFERENT library not shared with this caller', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library: sharedLibrary } = await newLibrary(ctx, { ownerId: owner.id });
+      const { library: otherLibrary } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: sharedLibrary.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: otherLibrary.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
+        new Set(),
+      );
+    });
+
+    it('should exclude a stranger with no share at all', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: stranger } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.person.checkSharedLibraryPersonAccess(stranger.id, new Set([person.id]))).resolves.toEqual(
+        new Set(),
+      );
+    });
+  });
+
+  describe('library.checkSelfShareAccess (Phase 5)', () => {
+    it('should return an empty set for empty input', async () => {
+      const { sut } = setup();
+      await expect(sut.library.checkSelfShareAccess(factory.uuid(), new Set())).resolves.toEqual(new Set());
+    });
+
+    it("should return the library for the recipient's own share row (any role)", async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer });
+
+      await expect(sut.library.checkSelfShareAccess(sharee.id, new Set([library.id]))).resolves.toEqual(
+        new Set([library.id]),
+      );
+    });
+
+    it('should exclude the library for its OWNER (owner has no library_user row)', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+
+      await expect(sut.library.checkSelfShareAccess(owner.id, new Set([library.id]))).resolves.toEqual(new Set());
+    });
+
+    it('should exclude the library for an unrelated third party', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: stranger } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+
+      await expect(sut.library.checkSelfShareAccess(stranger.id, new Set([library.id]))).resolves.toEqual(new Set());
     });
   });
 });

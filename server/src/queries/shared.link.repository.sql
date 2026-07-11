@@ -153,6 +153,10 @@ from
     where
       "album"."id" = "shared_link"."albumId"
       and "album"."deletedAt" is null
+      and (
+        "album_asset"."sourceLibraryId" is null
+        or false
+      )
     group by
       "album"."id",
       "owner".*

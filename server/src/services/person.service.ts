@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Insertable, Updateable } from 'kysely';
 import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { Person } from 'src/database';
@@ -21,6 +21,7 @@ import {
   PersonSearchDto,
   PersonStatisticsResponseDto,
   PersonUpdateDto,
+  redactPersonForNonOwner,
 } from 'src/dtos/person.dto';
 import {
   AssetVisibility,
@@ -44,6 +45,7 @@ import { getDimensions } from 'src/utils/asset.util';
 import { ImmichFileResponse } from 'src/utils/file';
 import { mimeTypes } from 'src/utils/mime-types';
 import { isFacialRecognitionEnabled } from 'src/utils/misc';
+import { getPreferences } from 'src/utils/preferences';
 import { Point, transformPoints } from 'src/utils/transform';
 
 @Injectable()
@@ -69,10 +71,29 @@ export class PersonService extends BaseService {
     });
     const { total, hidden } = await this.personRepository.getNumberOfPeople(auth.user.id);
 
+    // Phase 5 (§5.5): union in persons reachable through the caller's inTimeline-shared libraries.
+    // Always redacted, always excluding hidden persons regardless of `withHidden` (that's the OWNER's
+    // own preference, never a sharee's), with the minimumFaces threshold counting ONLY in-shared-
+    // library faces. Simplification: this arm is fetched as one capped, unpaginated batch rather than
+    // truly merged into the owner arm's page-by-page pagination - acceptable for a secondary listing
+    // surface, but noted here rather than glossed over.
+    let sharedPeople: PersonResponseDto[] = [];
+    const sharedLibraryIds = await this.libraryRepository.getInTimelineSharedLibraryIds(auth.user.id);
+    if (sharedLibraryIds.length > 0) {
+      const metadata = await this.userRepository.getMetadata(auth.user.id);
+      const minimumFaces = getPreferences(metadata).people.minimumFaces;
+      const shared = await this.personRepository.getAllForSharedLibraries(
+        sharedLibraryIds,
+        { take: 500, skip: 0 },
+        minimumFaces,
+      );
+      sharedPeople = shared.items.map((person) => redactPersonForNonOwner(mapPerson(person)));
+    }
+
     return {
-      people: items.map((person) => mapPerson(person)),
+      people: [...items.map((person) => mapPerson(person)), ...sharedPeople],
       hasNextPage,
-      total,
+      total: total + sharedPeople.length,
       hidden,
     };
   }
@@ -129,7 +150,19 @@ export class PersonService extends BaseService {
     const asset = await this.assetRepository.getForFaces(dto.id);
     const assetDimensions = getDimensions(asset);
 
-    return faces.map((face) => mapFaces(face, auth, asset.edits, assetDimensions));
+    // Phase 5 (§5.7): per-face redaction, not global reachability - is THIS asset's own library
+    // actively shared with the caller (any role)? See mapFaces' doc comment for why this differs
+    // from checkSharedLibraryPersonAccess.
+    let assetLibraryShared = false;
+    if (asset.libraryId && asset.ownerId !== auth.user.id) {
+      const sharedLibraryIds = await this.accessRepository.library.checkSharedAccess(
+        auth.user.id,
+        new Set([asset.libraryId]),
+      );
+      assetLibraryShared = sharedLibraryIds.size > 0;
+    }
+
+    return faces.map((face) => mapFaces(face, auth, asset.edits, assetDimensions, assetLibraryShared));
   }
 
   async createNewFeaturePhoto(changeFeaturePhoto: string[]) {
@@ -152,11 +185,22 @@ export class PersonService extends BaseService {
 
   async getById(auth: AuthDto, id: string): Promise<PersonResponseDto> {
     await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [id] });
-    return this.findOrFail(id).then(mapPerson);
+    const person = await this.findOrFail(id);
+    // Phase 5 (§5.3): PersonRead is now widened to shared-library reachability - redact for anyone
+    // who isn't the owner rather than returning the full account-wide projection.
+    return person.ownerId === auth.user.id ? mapPerson(person) : redactPersonForNonOwner(mapPerson(person));
   }
 
   async getStatistics(auth: AuthDto, id: string): Promise<PersonStatisticsResponseDto> {
-    await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [id] });
+    // Phase 5 (§5.2): statistics reveal the person's GLOBAL asset count, not just their footprint in
+    // a shared library - stays strictly owner-scoped even though PersonRead itself is now widened.
+    // Bypasses the generic Permission dispatch on purpose (mirrors the direct
+    // `this.accessRepository.<domain>.checkOwnerAccess` pattern already used elsewhere, e.g.
+    // album.service.ts/asset.service.ts) rather than reusing an owner-only mutation permission.
+    const isOwner = await this.accessRepository.person.checkOwnerAccess(auth.user.id, new Set([id]));
+    if (!isOwner.has(id)) {
+      throw new BadRequestException(`Not found or no ${Permission.PersonRead} access`);
+    }
     return this.personRepository.getStatistics(id);
   }
 
@@ -165,6 +209,18 @@ export class PersonService extends BaseService {
     const person = await this.personRepository.getById(id);
     if (!person || !person.thumbnailPath) {
       throw new NotFoundException();
+    }
+
+    if (person.ownerId !== auth.user.id) {
+      // Phase 5 (§5.6): the global thumbnailPath may be cropped from an asset outside any library
+      // shared with this caller - serve it only when the person's OWN feature face's source asset is
+      // itself in an inTimeline-shared library. The web falls back to the initials avatar on 403.
+      const servable =
+        !!person.faceAssetId &&
+        (await this.personRepository.isFeatureFaceInSharedLibrary(auth.user.id, person.faceAssetId));
+      if (!servable) {
+        throw new ForbiddenException();
+      }
     }
 
     return new ImmichFileResponse({
