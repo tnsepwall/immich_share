@@ -416,6 +416,35 @@ Verified with `pnpm install --frozen-lockfile --lockfile-only`, which now passes
 lockfile/manifest mismatch as harmless just because it doesn't break in dev - `--frozen-lockfile` in CI/production
 build paths makes it a hard blocker.
 
+**Second correction (post-deployment, worse):** the Phase 4 lockfile regeneration on Windows introduced a second,
+subtler production breakage that the fix above preserved. The repo's `.pnpmfile.cjs` had a **platform-dependent**
+`readPackage` hook: it promoted only the *current platform's* exiftool binary package from `optionalDependencies`
+to `dependencies` (`exiftool-vendored.exe` when run on Windows, `exiftool-vendored.pl` otherwise) so it survives
+`server/Dockerfile`'s `pnpm --prod --no-optional deploy`. Because that hook rewrites the dependency graph at
+lockfile-generation time, the lockfile's contents depend on which OS last regenerated it. The repo's original
+lockfile (initial commit, upstream's) was Linux-flavored: `.pl` regular, `.exe` optional - correct for Docker.
+Phase 4's Windows-side regeneration (commit `af1b99d`) silently flipped it: `.exe` regular, `.pl` optional. The
+resulting production image therefore contained the Windows exiftool binary and **no Linux exiftool at all**.
+
+Observed impact on the deployed Phase 4 image: `exiftool-vendored`'s `ExifTool.version()` neither resolves nor
+rejects when its binary is missing (reproduced in a clean `node:24-bookworm-slim` container against the deployed
+output - the promise simply never settles). `GET /api/server/about` awaits it inside a `Promise.all` with no
+timeout (`server-info.repository.ts` `getBuildVersions`), so that endpoint hangs forever; the web app's
+`auth-manager.refresh()` awaits `getAboutInfo()` before emitting `AuthUserLoaded`, so every signed-in page load
+hung on the splash spinner indefinitely. (Its `.catch(() => {})` is no protection against a promise that never
+settles.) Metadata extraction and Phase 3's sidecar writing would also have been broken on that image for any
+newly scanned assets. Phases 1-3 images were built from the original Linux-flavored lockfile and were unaffected.
+
+Fix (commit after this one): made the `.pnpmfile.cjs` hook platform-independent - it now promotes **both**
+`exiftool-vendored.exe` and `exiftool-vendored.pl` to regular dependencies, so the lockfile comes out identical no
+matter which OS regenerates it, at the cost of a few MB of unused Windows exiftool in the Linux image. Lockfile
+regenerated (8-line diff: the `.pl` promotion plus the `pnpmfileChecksum`), `--frozen-lockfile` re-verified, and
+the full failure chain re-verified fixed on real Linux: the same `pnpm --prod --no-optional deploy` in a
+`node:24-bookworm-slim` container now includes `exiftool-vendored.pl`'s binary, and a live `ExifTool.version()`
+call against the deployed output resolves. Lesson: a lockfile whose generation is platform-dependent is a
+production incident waiting for the first contributor on a different OS; hooks that rewrite dependency graphs
+must be deterministic across platforms.
+
 This closes what was the #1 recommended follow-up in every earlier draft of this log. The temporary API client
 pattern used throughout Phase 4's build (and the reasoning for it) remains documented above and in git history
 for context, even though the file itself is gone.
