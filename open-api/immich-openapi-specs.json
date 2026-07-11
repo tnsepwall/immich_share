@@ -7022,6 +7022,68 @@
         "x-immich-permission": "library.share"
       }
     },
+    "/libraries/{id}/users/me": {
+      "put": {
+        "description": "Update the current user's own preferences for a library shared with them - currently just whether its assets appear in their main timeline, explore, map & search. Recipient only; does not change role.",
+        "operationId": "updateMyLibraryShare",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryUserSelfUpdateDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SharedLibraryResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "cookie": []
+          },
+          {
+            "api_key": []
+          }
+        ],
+        "summary": "Update my library share preferences",
+        "tags": [
+          "Libraries"
+        ],
+        "x-immich-history": [
+          {
+            "version": "v3",
+            "state": "Added"
+          }
+        ],
+        "x-immich-permission": "libraryUser.selfUpdate"
+      }
+    },
     "/libraries/{id}/users/{userId}": {
       "delete": {
         "description": "Remove a shared user from the library. Use an ID of \"me\" to leave a shared library.",
@@ -7821,6 +7883,15 @@
             "required": false,
             "in": "query",
             "description": "Include shared album assets",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "withSharedLibraries",
+            "required": false,
+            "in": "query",
+            "description": "Include assets from external libraries shared with you where you have opted into the main timeline",
             "schema": {
               "type": "boolean"
             }
@@ -15248,6 +15319,15 @@
             }
           },
           {
+            "name": "withSharedLibraries",
+            "required": false,
+            "in": "query",
+            "description": "Include assets from external libraries shared with you where you have opted into the main timeline",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "withStacked",
             "required": false,
             "in": "query",
@@ -15443,6 +15523,15 @@
             "required": false,
             "in": "query",
             "description": "Include assets shared by partners",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "withSharedLibraries",
+            "required": false,
+            "in": "query",
+            "description": "Include assets from external libraries shared with you where you have opted into the main timeline",
             "schema": {
               "type": "boolean"
             }
@@ -20753,6 +20842,18 @@
         ],
         "type": "string"
       },
+      "LibraryUserSelfUpdateDto": {
+        "properties": {
+          "inTimeline": {
+            "description": "Show this shared library's assets in your main timeline, explore, map & search",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "inTimeline"
+        ],
+        "type": "object"
+      },
       "LibraryUserUpdateDto": {
         "properties": {
           "role": {
@@ -22285,6 +22386,7 @@
           "library.delete",
           "library.statistics",
           "library.share",
+          "libraryUser.selfUpdate",
           "libraryAsset.addToAlbum",
           "libraryAsset.update",
           "libraryPerson.read",
@@ -24374,6 +24476,10 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
             "type": "string"
           },
+          "inTimeline": {
+            "description": "Whether this shared library appears in your main timeline, explore, map & search",
+            "type": "boolean"
+          },
           "name": {
             "description": "Library name",
             "type": "string"
@@ -24403,6 +24509,7 @@
           "assetCount",
           "createdAt",
           "id",
+          "inTimeline",
           "name",
           "owner",
           "ownerId",
