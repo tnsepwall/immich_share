@@ -43,6 +43,13 @@ export class LibraryUserTable {
   @Column({ enum: library_user_role_enum, default: LibraryUserRole.Viewer })
   role!: Generated<LibraryUserRole>;
 
+  // Sharee-controlled opt-in: when true, this share's library assets also surface in the recipient's
+  // main Photos timeline, Explore, Map, and search (Phase 5), on top of the always-available dedicated
+  // browse route. Mirrors partner.table.ts's inTimeline exactly. Per-share row; never touched by the
+  // owner.
+  @Column({ type: 'boolean', default: false })
+  inTimeline!: Generated<boolean>;
+
   @CreateIdColumn({ index: true })
   createId!: Generated<string>;
 

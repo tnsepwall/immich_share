@@ -20,11 +20,18 @@ async function* mockWalk() {
   yield await Promise.resolve(['/data/user1/photo.jpg']);
 }
 
-const shareRow = (row: { libraryId: string; userId: string; user: any; role: LibraryUserRole }) => ({
+const shareRow = (row: {
+  libraryId: string;
+  userId: string;
+  user: any;
+  role: LibraryUserRole;
+  inTimeline?: boolean;
+}) => ({
   createId: newUuid(),
   createdAt: newDate(),
   updateId: newUuid(),
   updatedAt: newDate(),
+  inTimeline: false,
   ...row,
 });
 
@@ -1366,7 +1373,7 @@ describe(LibraryService.name, () => {
       const library = factory.library({ ownerId: owner.id, importPaths: ['/secret/path'] });
 
       mocks.library.getSharedWithUser.mockResolvedValue([
-        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Editor, assetCount: 3 },
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Editor, inTimeline: true, assetCount: 3 },
       ]);
 
       const result = await sut.getSharedWithMe(auth);
@@ -1379,6 +1386,7 @@ describe(LibraryService.name, () => {
           ownerId: owner.id,
           owner: expect.objectContaining({ id: owner.id }),
           role: 'editor',
+          inTimeline: true,
           createdAt: library.createdAt,
           refreshedAt: library.refreshedAt,
           assetCount: 3,

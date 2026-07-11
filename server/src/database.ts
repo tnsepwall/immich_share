@@ -39,6 +39,7 @@ export type LibraryUser = {
   userId: string;
   user: ShallowDehydrateObject<User>;
   role: LibraryUserRole;
+  inTimeline: boolean;
   createId: string;
   createdAt: Date;
   updateId: string;
@@ -47,6 +48,7 @@ export type LibraryUser = {
 
 export type SharedLibrary = Library & {
   role: LibraryUserRole;
+  inTimeline: boolean;
   owner: ShallowDehydrateObject<User>;
   // Kysely types a correlated scalar-subquery column as nullable even though COUNT(*) never returns SQL NULL.
   assetCount: number | null;

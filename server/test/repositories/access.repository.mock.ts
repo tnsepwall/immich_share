@@ -44,6 +44,7 @@ export const newAccessRepositoryMock = (): IAccessRepositoryMock => {
       checkEditorAccess: vitest.fn().mockResolvedValue(new Set()),
       checkOwnerAccess: vitest.fn().mockResolvedValue(new Set()),
       checkSharedAccess: vitest.fn().mockResolvedValue(new Set()),
+      checkSelfShareAccess: vitest.fn().mockResolvedValue(new Set()),
     },
 
     memory: {
@@ -59,6 +60,7 @@ export const newAccessRepositoryMock = (): IAccessRepositoryMock => {
       checkOwnerAccess: vitest.fn().mockResolvedValue(new Set()),
       checkLibraryFaceScope: vitest.fn().mockResolvedValue(new Set()),
       checkLibraryPersonScope: vitest.fn().mockResolvedValue(new Set()),
+      checkSharedLibraryPersonAccess: vitest.fn().mockResolvedValue(new Set()),
       checkPersonExclusiveToLibrary: vitest.fn().mockResolvedValue(false),
     },
 

@@ -27,6 +27,7 @@ import {
   LibraryStatsResponseDto,
   LibraryUserResponseDto,
   LibraryUsersDto,
+  LibraryUserSelfUpdateDto,
   LibraryUserUpdateDto,
   SharedLibraryResponseDto,
   UpdateLibraryDto,
@@ -186,6 +187,22 @@ export class LibraryController {
     @Body() dto: LibraryUsersDto,
   ): Promise<LibraryUserResponseDto[]> {
     return this.service.addUsers(auth, id, dto);
+  }
+
+  @Put(':id/users/me')
+  @Authenticated({ permission: Permission.LibraryUserSelfUpdate })
+  @Endpoint({
+    summary: 'Update my library share preferences',
+    description:
+      "Update the current user's own preferences for a library shared with them - currently just whether its assets appear in their main timeline, explore, map & search. Recipient only; does not change role.",
+    history: new HistoryBuilder().added('v3'),
+  })
+  updateMyLibraryShare(
+    @Auth() auth: AuthDto,
+    @Param() { id }: UUIDParamDto,
+    @Body() dto: LibraryUserSelfUpdateDto,
+  ): Promise<SharedLibraryResponseDto> {
+    return this.service.updateMyShare(auth, id, dto);
   }
 
   @Put(':id/users/:userId')

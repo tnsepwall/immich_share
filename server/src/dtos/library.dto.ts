@@ -90,6 +90,15 @@ const LibraryUserUpdateSchema = z
   })
   .meta({ id: 'LibraryUserUpdateDto' });
 
+// Sharee's own self-service update - deliberately its own schema, not folded into
+// LibraryUserUpdateSchema above: the owner manages `role`, the recipient manages their own
+// `inTimeline` preference, and neither side may touch the other's field through this route.
+const LibraryUserSelfUpdateSchema = z
+  .object({
+    inTimeline: z.boolean().describe('Show this shared library\'s assets in your main timeline, explore, map & search'),
+  })
+  .meta({ id: 'LibraryUserSelfUpdateDto' });
+
 const SharedLibraryResponseSchema = z
   .object({
     id: z.uuidv4().describe('Library ID'),
@@ -97,6 +106,7 @@ const SharedLibraryResponseSchema = z
     ownerId: z.uuidv4().describe('Owner user ID'),
     owner: UserResponseSchema,
     role: LibraryUserRoleSchema,
+    inTimeline: z.boolean().describe('Whether this shared library appears in your main timeline, explore, map & search'),
     createdAt: isoDatetimeToDate.describe('Creation date'),
     refreshedAt: isoDatetimeToDate.nullable().describe('Last refresh date'),
     assetCount: z.int().describe('Number of assets visible to the recipient'),
@@ -136,6 +146,7 @@ export class LibraryResponseDto extends createZodDto(LibraryResponseSchema) {}
 export class LibraryStatsResponseDto extends createZodDto(LibraryStatsResponseSchema) {}
 export class LibraryUsersDto extends createZodDto(LibraryUsersSchema) {}
 export class LibraryUserUpdateDto extends createZodDto(LibraryUserUpdateSchema) {}
+export class LibraryUserSelfUpdateDto extends createZodDto(LibraryUserSelfUpdateSchema) {}
 export class LibraryUserResponseDto extends createZodDto(LibraryUserResponseSchema) {}
 export class SharedLibraryResponseDto extends createZodDto(SharedLibraryResponseSchema) {}
 
@@ -172,6 +183,7 @@ export function mapSharedLibrary(entity: SharedLibrary): SharedLibraryResponseDt
     ownerId: entity.ownerId,
     owner: mapUser(entity.owner),
     role: entity.role,
+    inTimeline: entity.inTimeline,
     createdAt: entity.createdAt,
     refreshedAt: entity.refreshedAt,
     assetCount: entity.assetCount ?? 0,

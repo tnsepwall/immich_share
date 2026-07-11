@@ -273,6 +273,13 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.library.checkOwnerAccess(auth.user.id, ids);
     }
 
+    // uses library id; the recipient's OWN share row only (any role) - a sharee setting their own
+    // inTimeline preference. Deliberately NOT owner ∪ shared like LibraryRead: the owner has no
+    // library_user row and has no business setting a sharee's personal view preference.
+    case Permission.LibraryUserSelfUpdate: {
+      return access.library.checkSelfShareAccess(auth.user.id, ids);
+    }
+
     // uses asset ids; backs the provenance-aware album-insertion fallback only, never shared-link creation
     case Permission.LibraryAssetAddToAlbum: {
       return access.asset.checkSharedLibraryAlbumAddAccess(auth.user.id, ids);
@@ -345,7 +352,21 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.person.checkFaceOwnerAccess(auth.user.id, ids);
     }
 
-    case Permission.PersonRead:
+    // Phase 5 (§5, SECURITY PREREQUISITE): PersonRead is split from PersonUpdate/Delete/Merge below -
+    // this is the ONLY person permission a shared-library recipient may ever satisfy, and only for
+    // persons reachable through a library shared with them with inTimeline=true (§5.1). Widening this
+    // case must never be merged back with the mutation cases below.
+    case Permission.PersonRead: {
+      const isOwner = await access.person.checkOwnerAccess(auth.user.id, ids);
+      const isSharedLibraryReachable = await access.person.checkSharedLibraryPersonAccess(
+        auth.user.id,
+        setDifference(ids, isOwner),
+      );
+      return setUnion(isOwner, isSharedLibraryReachable);
+    }
+
+    // Owner-only, deliberately NOT widened to shared-library reachability - rename/delete/merge remain
+    // account-owner actions regardless of how a sharee reached this person via PersonRead above.
     case Permission.PersonUpdate:
     case Permission.PersonDelete:
     case Permission.PersonMerge: {
