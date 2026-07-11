@@ -15,7 +15,7 @@
   import { handleError } from '$lib/utils/handle-error';
   import { fromISODateTime, fromISODateTimeUTC } from '$lib/utils/timeline-util';
   import { getAssetInfo, updateLibraryAsset, type AssetResponseDto } from '@immich/sdk';
-  import { Icon, modalManager, Textarea, toastManager } from '@immich/ui';
+  import { Icon, modalManager, Text, Textarea, toastManager } from '@immich/ui';
   import { mdiCalendar, mdiMapMarkerOutline, mdiPencil } from '@mdi/js';
   import { t } from 'svelte-i18n';
   import { fromAction } from 'svelte/attachments';
@@ -112,7 +112,14 @@
   };
 </script>
 
-<section class="mt-10 px-4">
+<section class="mt-10 px-4 text-sm">
+  <div class="flex h-10 w-full items-center gap-2">
+    <Icon icon={mdiPencil} size="16" />
+    <Text size="small" color="muted">{$t('edit_metadata')}</Text>
+  </div>
+</section>
+
+<section class="px-4">
   <Textarea
     bind:value={description}
     class="max-h-40 resize-none border-b border-gray-500 bg-transparent pl-0 ring-0 outline-none focus:border-b-2 focus:border-immich-primary focus:ring-0 dark:bg-transparent dark:focus:border-immich-dark-primary"

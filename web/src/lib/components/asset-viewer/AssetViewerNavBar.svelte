@@ -25,7 +25,7 @@
   import { getSharedLink, withoutIcons } from '$lib/utils';
   import type { OnUndoDelete } from '$lib/utils/actions';
   import type { LibraryShareContext } from '$lib/utils/library-share-context';
-  import { isLibraryShareOwnerPreview } from '$lib/utils/library-share-context';
+  import { isLibraryShareEditor, isLibraryShareOwnerPreview } from '$lib/utils/library-share-context';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
   import {
     AssetTypeEnum,
@@ -36,7 +36,7 @@
     type StackResponseDto,
   } from '@immich/sdk';
   import { ActionButton, CommandPaletteDefaultProvider, modalManager, Tooltip, type ActionItem } from '@immich/ui';
-  import { mdiArrowLeft, mdiArrowRight, mdiDotsVertical, mdiVideoOutline } from '@mdi/js';
+  import { mdiArrowLeft, mdiArrowRight, mdiDotsVertical, mdiPencilOutline, mdiVideoOutline } from '@mdi/js';
   import { t } from 'svelte-i18n';
 
   interface Props {
@@ -113,11 +113,27 @@
       : Actions.AddToAlbum,
   );
 
+  // Discoverability fix: a shared-library Editor's metadata editor already lives inside the same
+  // detail panel the generic "Info" button opens (DetailPanel.svelte's isLibraryEditor branch), but
+  // nothing labeled it as editable, so Editors reported not being able to find it at all. A second,
+  // explicitly-labeled action fixes that without touching Info's own read-oriented behavior or
+  // reusing Actions.Edit (mdiTune) - that's the destructive photo editor, a different surface.
+  const isEditor = $derived(isLibraryShareEditor(libraryShare));
+  const EditInfo: ActionItem = $derived({
+    title: $t('edit_info'),
+    icon: mdiPencilOutline,
+    $if: () => isEditor && asset.hasMetadata,
+    onAction: () => assetViewerManager.openDetailPanel(),
+  });
+
   // Command-palette actions mirror what's actually rendered below: swap in the restricted
-  // AddToAlbum and drop Share entirely for a shared-library recipient, so a keyboard/palette
-  // invocation can't reach a dead action that the server would reject anyway.
+  // AddToAlbum, drop Share entirely for a shared-library recipient, and surface the Editor's
+  // "Edit info" action, so a keyboard/palette invocation can't reach a dead action the server would
+  // reject anyway and can reach the one this fix adds.
   const paletteActions = $derived(
-    Object.values({ ...Actions, AddToAlbum }).filter((action) => !isLibraryRecipient || action !== Actions.Share),
+    Object.values({ ...Actions, AddToAlbum, EditInfo }).filter(
+      (action) => !isLibraryRecipient || action !== Actions.Share,
+    ),
   );
 </script>
 
@@ -155,6 +171,7 @@
     <ActionButton action={Actions.Copy} />
     <ActionButton action={Actions.SharedLinkDownload} />
     <ActionButton action={Actions.Info} />
+    <ActionButton action={EditInfo} />
     <ActionButton action={Actions.Favorite} />
     <ActionButton action={Actions.Unfavorite} />
 
