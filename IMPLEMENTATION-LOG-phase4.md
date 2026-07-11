@@ -445,6 +445,18 @@ call against the deployed output resolves. Lesson: a lockfile whose generation i
 production incident waiting for the first contributor on a different OS; hooks that rewrite dependency graphs
 must be deterministic across platforms.
 
+**Follow-up migration (schema drift from Phase 1):** production startup logs also surfaced six pre-existing schema
+drift warnings for `library_user`, unrelated to the exiftool issue. Phase 1's hand-written migration created the
+tables, function, and triggers, but missed the two foreign-key indexes (`library_user_libraryId_idx`,
+`library_user_userId_idx`) and never inserted the three `migration_overrides` registry rows that Immich's drift
+checker uses to track function/trigger definitions (it reads those from the registry, not from Postgres
+introspection - so even the objects that existed were reported "missing"). Fixed by
+`1783800000000-FixLibraryUserSchemaDrift.ts`, generated with `sql-tools migrations generate` (the same tool that
+reports the drift) against the devcontainer database, which was in the identical drifted state as production. The
+timestamp is deliberately above Phase 3's future-dated `1783780000000-*` so the runner never sees it as
+out-of-order. Verified both paths on real Postgres: upgrade (drifted DB + this migration → "No changes detected")
+and fresh install (empty DB + all migrations → "No changes detected").
+
 This closes what was the #1 recommended follow-up in every earlier draft of this log. The temporary API client
 pattern used throughout Phase 4's build (and the reasoning for it) remains documented above and in git history
 for context, even though the file itself is gone.
