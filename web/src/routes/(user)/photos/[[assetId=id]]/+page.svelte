@@ -42,7 +42,13 @@
   import { t } from 'svelte-i18n';
 
   let timelineManager = $state<TimelineManager>() as TimelineManager;
-  const options = { visibility: AssetVisibility.Timeline, withStacked: true, withPartners: true };
+  const options = {
+    visibility: AssetVisibility.Timeline,
+    withStacked: true,
+    withPartners: true,
+    // Server-side flag is the real gate (library_user.inTimeline) - mirrors withPartners.
+    withSharedLibraries: true,
+  };
 
   let selectedAssets = $derived(assetMultiSelectManager.assets);
   let isAssetStackSelected = $derived(selectedAssets.length === 1 && !!selectedAssets[0].stack);
@@ -116,7 +122,9 @@
     {@const Actions = getAssetBulkActions($t)}
     <CommandPaletteDefaultProvider name={$t('assets')} actions={Object.values(Actions)} />
 
-    <CreateSharedLink />
+    {#if assetMultiSelectManager.isAllUserOwned}
+      <CreateSharedLink />
+    {/if}
     <SelectAllAssets {timelineManager} assetInteraction={assetMultiSelectManager} />
     <ActionButton action={Actions.AddToAlbum} />
 

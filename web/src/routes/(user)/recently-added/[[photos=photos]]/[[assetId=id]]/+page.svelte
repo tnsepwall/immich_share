@@ -48,6 +48,8 @@
     visibility: AssetVisibility.Timeline,
     withStacked: true,
     withPartners: true,
+    // Server-side flag is the real gate (library_user.inTimeline) - mirrors withPartners.
+    withSharedLibraries: true,
     orderBy: AssetOrderBy.CreatedAt,
   };
 
@@ -110,7 +112,9 @@
     {@const Actions = getAssetBulkActions($t)}
     <CommandPaletteDefaultProvider name={$t('assets')} actions={Object.values(Actions)} />
 
-    <CreateSharedLink />
+    {#if assetMultiSelectManager.isAllUserOwned}
+      <CreateSharedLink />
+    {/if}
     <SelectAllAssets {timelineManager} assetInteraction={assetMultiSelectManager} />
     <ActionButton action={Actions.AddToAlbum} />
 

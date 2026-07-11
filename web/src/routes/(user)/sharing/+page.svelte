@@ -3,6 +3,7 @@
   import Albums from '$lib/components/album-page/AlbumsList.svelte';
   import UserPageLayout from '$lib/components/layouts/UserPageLayout.svelte';
   import EmptyPlaceholder from '$lib/components/shared-components/EmptyPlaceholder.svelte';
+  import SettingSwitch from '$lib/components/shared-components/settings/SettingSwitch.svelte';
   import UserAvatar from '$lib/components/shared-components/UserAvatar.svelte';
   import LibraryShareModal from '$lib/modals/LibraryShareModal.svelte';
   import { Route } from '$lib/route';
@@ -16,8 +17,10 @@
     SortOrder,
     type AlbumViewSettings,
   } from '$lib/stores/preferences.store';
-  import type { LibraryResponseDto, SharedLibraryResponseDto } from '@immich/sdk';
-  import { Button, IconButton, modalManager } from '@immich/ui';
+  import { libraryShareStore } from '$lib/stores/library-share-store.svelte';
+  import { handleError } from '$lib/utils/handle-error';
+  import { updateMyLibraryShare, type LibraryResponseDto, type SharedLibraryResponseDto } from '@immich/sdk';
+  import { Button, IconButton, modalManager, toastManager } from '@immich/ui';
   import { mdiInformationOutline, mdiShareVariantOutline } from '@mdi/js';
   import { invalidateAll } from '$app/navigation';
   import { t } from 'svelte-i18n';
@@ -32,8 +35,25 @@
   const openLibraryShareModal = async (library: LibraryResponseDto | SharedLibraryResponseDto) => {
     await modalManager.show(LibraryShareModal, { library });
     // The modal manages its own share list locally; refresh the loader data so the hub (and
-    // asset counts / owned-library share counts) reflect any add/remove/leave that happened.
+    // asset counts / owned-library share counts) reflect any add/remove/leave that happened. Also
+    // invalidate the session-cached share-role lookup (§6.3) - a role change or leave here could
+    // change what the main-timeline asset viewer derives for this library going forward.
     await invalidateAll();
+    libraryShareStore.invalidate();
+  };
+
+  // Sharee-controlled opt-in (§0.1/§6.1): mirrors PartnerSettings.svelte's
+  // handleShowOnTimelineChanged - bind:checked on the switch below already applies the change
+  // optimistically, so on failure we just revert it and surface the error.
+  const handleShowInTimelineChanged = async (library: SharedLibraryResponseDto, inTimeline: boolean) => {
+    try {
+      const updated = await updateMyLibraryShare({ id: library.id, libraryUserSelfUpdateDto: { inTimeline } });
+      library.inTimeline = updated.inTimeline;
+      toastManager.primary($t('saved_settings'));
+    } catch (error) {
+      library.inTimeline = !inTimeline;
+      handleError(error, $t('errors.unable_to_update_timeline_display_status'));
+    }
   };
 
   const settings: AlbumViewSettings = {
@@ -90,27 +110,38 @@
         {#if data.sharedLibraries.length > 0}
           <div class="flex flex-row flex-wrap gap-4">
             {#each data.sharedLibraries as library (library.id)}
-              <div class="flex items-center gap-1 rounded-lg transition-all hover:bg-gray-200 dark:hover:bg-gray-700">
-                <a href={Route.viewSharedLibrary(library)} class="flex grow gap-4 px-5 py-4">
-                  <UserAvatar user={library.owner} size="lg" />
-                  <div class="text-start">
-                    <p class="text-immich-fg dark:text-immich-dark-fg">
-                      {library.name}
-                    </p>
-                    <p class="text-sm text-immich-fg/75 dark:text-immich-dark-fg/75">
-                      {$t('shared_by_user', { values: { user: library.owner.name } })}
-                    </p>
-                  </div>
-                </a>
-                <IconButton
-                  shape="round"
-                  color="secondary"
-                  variant="ghost"
-                  size="small"
-                  class="me-3"
-                  icon={mdiInformationOutline}
-                  aria-label={$t('view_shared_library_details')}
-                  onclick={() => openLibraryShareModal(library)}
+              <div
+                class="flex flex-col gap-2 rounded-lg border border-gray-200 px-5 py-3 transition-all dark:border-gray-800"
+              >
+                <div class="flex items-center gap-1">
+                  <a
+                    href={Route.viewSharedLibrary(library)}
+                    class="flex grow gap-4 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <UserAvatar user={library.owner} size="lg" />
+                    <div class="text-start">
+                      <p class="text-immich-fg dark:text-immich-dark-fg">
+                        {library.name}
+                      </p>
+                      <p class="text-sm text-immich-fg/75 dark:text-immich-dark-fg/75">
+                        {$t('shared_by_user', { values: { user: library.owner.name } })}
+                      </p>
+                    </div>
+                  </a>
+                  <IconButton
+                    shape="round"
+                    color="secondary"
+                    variant="ghost"
+                    size="small"
+                    icon={mdiInformationOutline}
+                    aria-label={$t('view_shared_library_details')}
+                    onclick={() => openLibraryShareModal(library)}
+                  />
+                </div>
+                <SettingSwitch
+                  title={$t('show_shared_library_in_main_surfaces')}
+                  bind:checked={library.inTimeline}
+                  onToggle={(isChecked) => handleShowInTimelineChanged(library, isChecked)}
                 />
               </div>
             {/each}

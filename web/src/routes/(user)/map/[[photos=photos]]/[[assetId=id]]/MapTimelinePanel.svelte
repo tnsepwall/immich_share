@@ -85,6 +85,9 @@
     visibility: $mapSettings.includeArchived ? undefined : AssetVisibility.Timeline,
     isFavorite: $mapSettings.onlyFavorites || undefined,
     withPartners: $mapSettings.withPartners || undefined,
+    // Drives the main bucket endpoints (not the map markers themselves) so the cluster side panel
+    // includes the same assets as the markers on the map (§4.4).
+    withSharedLibraries: $mapSettings.withSharedLibraries || undefined,
     assetFilter: selectedClusterIds,
   });
 
@@ -123,7 +126,9 @@
 
   <Portal target="body">
     <AssetSelectControlBar>
-      <CreateSharedLink />
+      {#if assetMultiSelectManager.isAllUserOwned}
+        <CreateSharedLink />
+      {/if}
       <SelectAllAssets {timelineManager} assetInteraction={assetMultiSelectManager} />
       <ActionButton action={Actions.AddToAlbum} />
 

@@ -223,7 +223,7 @@
     }
     abortController = new AbortController();
 
-    const { includeArchived, onlyFavorites, withPartners, withSharedAlbums } = $mapSettings;
+    const { includeArchived, onlyFavorites, withPartners, withSharedAlbums, withSharedLibraries } = $mapSettings;
     const { fileCreatedAfter, fileCreatedBefore } = getFileCreatedDates();
 
     return await getMapMarkers(
@@ -234,6 +234,7 @@
         fileCreatedBefore,
         withPartners: withPartners || undefined,
         withSharedAlbums: withSharedAlbums || undefined,
+        withSharedLibraries: withSharedLibraries || undefined,
       },
       {
         signal: abortController.signal,
