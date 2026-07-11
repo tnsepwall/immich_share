@@ -36,6 +36,9 @@
     <Field label={$t('include_shared_albums')}>
       <Switch bind:checked={settings.withSharedAlbums} />
     </Field>
+    <Field label={$t('include_shared_library_assets')}>
+      <Switch bind:checked={settings.withSharedLibraries} />
+    </Field>
 
     {#if customDateRange}
       <div in:fly={{ y: 10, duration: 200 }} class="flex flex-col gap-4">

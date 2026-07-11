@@ -15,6 +15,7 @@
   import { navigate } from '$lib/utils/navigation';
   import { toTimelineAsset } from '$lib/utils/timeline-util';
   import type { LibraryShareContext } from '$lib/utils/library-share-context';
+  import { libraryShareStore } from '$lib/stores/library-share-store.svelte';
   import { type AlbumResponseDto, type AssetResponseDto, type PersonResponseDto, getAssetInfo } from '@immich/sdk';
   import { onDestroy, onMount } from 'svelte';
   import { t } from 'svelte-i18n';
@@ -70,6 +71,23 @@
     current: assetViewerManager.asset!,
     previousAsset: undefined,
     nextAsset: undefined,
+  });
+
+  // Phase 5 (§6.3): the dedicated `/shared-libraries/:id` route always passes its own explicit
+  // `libraryShare` prop (owner-preview role included) - that wins outright. Everywhere else (the
+  // main timeline, once a shared-library asset's inTimeline flag surfaces it here), derive the
+  // same context from the session-cached share-role lookup so Phase 4's role-aware panels light
+  // up identically, without re-deriving reachability from scratch per asset.
+  const effectiveLibraryShare: LibraryShareContext | undefined = $derived.by(() => {
+    if (libraryShare) {
+      return libraryShare;
+    }
+    const asset = assetCursor.current;
+    if (!asset.libraryId || !authManager.authenticated || asset.ownerId === authManager.user.id) {
+      return undefined;
+    }
+    const role = libraryShareStore.getRole(asset.libraryId);
+    return role ? { libraryId: asset.libraryId, role } : undefined;
   });
 
   const loadCloseAssets = async (currentAsset: AssetResponseDto) => {
@@ -222,6 +240,9 @@
   };
 
   onMount(() => {
+    // Best-effort warm-up for effectiveLibraryShare above; never blocks rendering the viewer.
+    handlePromiseError(libraryShareStore.ensureLoaded());
+
     const unsubscribes = [
       websocketEvents.on('on_upload_success', (asset: AssetResponseDto) => handleUpdateOrUpload(asset)),
       websocketEvents.on('on_asset_update', (asset: AssetResponseDto) => handleUpdateOrUpload(asset)),
@@ -245,7 +266,7 @@
     {isShared}
     {album}
     {person}
-    {libraryShare}
+    libraryShare={effectiveLibraryShare}
     onAssetChange={(asset) => {
       timelineManager?.upsertAssets([toTimelineAsset(asset)]);
     }}
