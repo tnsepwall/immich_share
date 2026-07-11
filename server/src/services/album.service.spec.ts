@@ -915,7 +915,7 @@ describe(AlbumService.name, () => {
       expect(mocks.access.asset.checkPartnerAccess).toHaveBeenCalledWith(owner.id, new Set([asset.id]));
     });
 
-    it('should add a shared-library asset to the album owner\'s own album via a library grant', async () => {
+    it("should add a shared-library asset to the album owner's own album via a library grant", async () => {
       const owner = UserFactory.create();
       const album = AlbumFactory.from().owner(owner).build();
       const asset = AssetFactory.create({ libraryId: newUuid() });

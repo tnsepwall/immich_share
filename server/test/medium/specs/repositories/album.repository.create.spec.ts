@@ -89,11 +89,14 @@ describe(`${AlbumRepository.name}.create`, () => {
     const { user: libraryOwner } = await ctx.newUser();
     const { user: recipient } = await ctx.newUser();
     const { library } = await newLibrary(ctx, { ownerId: libraryOwner.id });
-    await ctx.database.insertInto('library_user').values({
-      libraryId: library.id,
-      userId: recipient.id,
-      role: LibraryUserRole.Viewer,
-    }).execute();
+    await ctx.database
+      .insertInto('library_user')
+      .values({
+        libraryId: library.id,
+        userId: recipient.id,
+        role: LibraryUserRole.Viewer,
+      })
+      .execute();
     const { asset } = await ctx.newAsset({
       ownerId: libraryOwner.id,
       libraryId: library.id,

@@ -126,9 +126,9 @@ describe(`${AssetRepository.name}.updateLibraryAssetMetadata`, () => {
       visibility: AssetVisibility.Timeline,
     });
 
-    await expect(
-      sut.updateLibraryAssetMetadata(library.id, editor.id, [asset.id], { rating: 3 }),
-    ).resolves.toEqual([asset.id]);
+    await expect(sut.updateLibraryAssetMetadata(library.id, editor.id, [asset.id], { rating: 3 })).resolves.toEqual([
+      asset.id,
+    ]);
 
     await expect(sut.updateLibraryAssetMetadata(library.id, viewer.id, [asset.id], { rating: 1 })).resolves.toBeNull();
 
@@ -207,9 +207,7 @@ describe(`${AssetRepository.name}.updateLibraryAssetMetadata`, () => {
     });
     await ctx.database.updateTable('library').set({ deletedAt: new Date() }).where('id', '=', library.id).execute();
 
-    await expect(
-      sut.updateLibraryAssetMetadata(library.id, owner.id, [asset.id], { rating: 2 }),
-    ).resolves.toBeNull();
+    await expect(sut.updateLibraryAssetMetadata(library.id, owner.id, [asset.id], { rating: 2 })).resolves.toBeNull();
   });
 
   it('should derive localDateTime/fileCreatedAt from an absolute dateTimeOriginal edit', async () => {

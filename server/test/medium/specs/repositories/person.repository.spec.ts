@@ -386,13 +386,19 @@ describe(PersonRepository.name, () => {
       const { user: owner } = await ctx.newUser();
       const { user: sharee } = await ctx.newUser();
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
-      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: true });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
       const { asset } = await ctx.newAsset({
         ownerId: owner.id,
         libraryId: library.id,
         visibility: AssetVisibility.Timeline,
       });
-      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
 
       await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(true);
     });
@@ -414,7 +420,8 @@ describe(PersonRepository.name, () => {
         libraryId: otherLibrary.id,
         visibility: AssetVisibility.Timeline,
       });
-      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
 
       await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(false);
     });
@@ -424,15 +431,48 @@ describe(PersonRepository.name, () => {
       const { user: owner } = await ctx.newUser();
       const { user: sharee } = await ctx.newUser();
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
-      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: false });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: false,
+      });
       const { asset } = await ctx.newAsset({
         ownerId: owner.id,
         libraryId: library.id,
         visibility: AssetVisibility.Timeline,
       });
-      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
 
       await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(false);
+    });
+
+    // Review finding (plan §5.3): never serve the crop of a person the owner has hidden.
+    it('should return false when the person is hidden, even on a fully shared asset', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id, isHidden: true });
+      const { assetFace } = await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(false);
+
+      // sanity check: un-hiding restores the gate, proving isHidden was the only blocker
+      await ctx.database.updateTable('person').set({ isHidden: false }).where('id', '=', person.id).execute();
+      await expect(sut.isFeatureFaceInSharedLibrary(sharee.id, assetFace.id)).resolves.toBe(true);
     });
   });
 });

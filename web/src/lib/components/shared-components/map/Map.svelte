@@ -234,7 +234,11 @@
         fileCreatedBefore,
         withPartners: withPartners || undefined,
         withSharedAlbums: withSharedAlbums || undefined,
-        withSharedLibraries: withSharedLibraries || undefined,
+        // Dropped when 'Include archived' or 'Only favorites' is active, mirroring MapTimelinePanel
+        // (review finding): the server refuses isFavorite over the shared arm (owner-favorite probe),
+        // and the cluster side panel cannot request withSharedLibraries in either mode - keeping the
+        // markers and the panel consistent means shared libraries only participate in the default view.
+        withSharedLibraries: (withSharedLibraries && !includeArchived && !onlyFavorites) || undefined,
       },
       {
         signal: abortController.signal,

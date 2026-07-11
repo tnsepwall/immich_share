@@ -42,6 +42,7 @@ import {
   removeUndefinedKeys,
   truncatedDate,
   unnest,
+  withAlbumAssetProvenance,
   withDefaultVisibility,
   withEdits,
   withExif,
@@ -49,7 +50,6 @@ import {
   withFacesAndPeople,
   withFilePath,
   withFiles,
-  withAlbumAssetProvenance,
   withLibrary,
   withOwner,
   withSharedLibraryAssets,
@@ -192,7 +192,9 @@ const withoutProperties = (
   column: 'lockedProperties' | 'sidecarWriteProperties',
   properties: LockableProperty[],
 ) =>
-  sql<LockableProperty[] | null>`nullif(array(select distinct property from unnest(${eb.ref(`asset_exif.${column}`)}) property where not property = any(${properties})), '{}')`;
+  sql<
+    LockableProperty[] | null
+  >`nullif(array(select distinct property from unnest(${eb.ref(`asset_exif.${column}`)}) property where not property = any(${properties})), '{}')`;
 
 const getBoundingCircle = (bbox: BoundingBox) => {
   const { west, south, east, north } = bbox;
@@ -436,7 +438,9 @@ export class AssetRepository {
     return this.db.transaction().execute(async (trx) => {
       const library = await trx
         .selectFrom('library')
-        .innerJoin('user as owner', (join) => join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null))
+        .innerJoin('user as owner', (join) =>
+          join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+        )
         .select('library.ownerId')
         .where('library.id', '=', libraryId)
         .where('library.deletedAt', 'is', null)
@@ -527,7 +531,8 @@ export class AssetRepository {
           .execute();
       }
 
-      const isDateEdit = edit.dateTimeOriginal !== undefined || edit.dateTimeRelative !== undefined || edit.timeZone !== undefined;
+      const isDateEdit =
+        edit.dateTimeOriginal !== undefined || edit.dateTimeRelative !== undefined || edit.timeZone !== undefined;
       if (isDateEdit) {
         for (const row of scoped) {
           const timeZone = edit.timeZone ?? row.timeZone ?? 'UTC';
@@ -556,7 +561,10 @@ export class AssetRepository {
                 timeZone: eb.ref('excluded.timeZone'),
                 lockedProperties: distinctUnion(eb, 'lockedProperties', ['dateTimeOriginal', 'timeZone']),
                 // Same pending-owner-write cancellation as the non-date branch above.
-                sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', ['dateTimeOriginal', 'timeZone']),
+                sidecarWriteProperties: withoutProperties(eb, 'sidecarWriteProperties', [
+                  'dateTimeOriginal',
+                  'timeZone',
+                ]),
               })),
             )
             .execute();
@@ -1154,9 +1162,17 @@ export class AssetRepository {
                     .where('stacked.visibility', '=', AssetVisibility.Timeline)
                     // Never surface a stack tuple for a shared-library row (§2.4) - regardless of
                     // whether it's the stack's actual primary, a sharee must never see stack grouping
-                    // info at all, since stacks are owner-only in v1.
+                    // info at all, since stacks are owner-only in v1. NULL-SAFE on purpose (review
+                    // finding): uploaded assets have libraryId IS NULL, and a bare NOT IN evaluates to
+                    // SQL NULL for them - which silently dropped the caller's own uploaded-asset stack
+                    // tuples whenever they had any inTimeline shared library.
                     .$if(!!options.sharedLibraryIds && options.sharedLibraryIds.length > 0, (qb) =>
-                      qb.where('asset.libraryId', 'not in', options.sharedLibraryIds!),
+                      qb.where((eb) =>
+                        eb.or([
+                          eb('asset.libraryId', 'is', null),
+                          eb('asset.libraryId', 'not in', options.sharedLibraryIds!),
+                        ]),
+                      ),
                     )
                     .groupBy('stacked.stackId')
                     .as('stacked_assets'),
@@ -1502,7 +1518,13 @@ export class AssetRepository {
     return this.db
       .selectFrom('asset')
       .innerJoin('asset_exif', (join) => join.onRef('asset_exif.assetId', '=', 'asset.id'))
-      .select(['asset.ownerId', 'asset.libraryId', 'asset_exif.exifImageHeight', 'asset_exif.exifImageWidth', 'asset_exif.orientation'])
+      .select([
+        'asset.ownerId',
+        'asset.libraryId',
+        'asset_exif.exifImageHeight',
+        'asset_exif.exifImageWidth',
+        'asset_exif.orientation',
+      ])
       .select(withEdits)
       .where('asset.id', '=', id)
       .executeTakeFirstOrThrow();

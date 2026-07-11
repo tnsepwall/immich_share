@@ -550,10 +550,7 @@ export function searchAssetBuilder(kysely: Kysely<DB>, options: AssetSearchBuild
       qb.where((eb) =>
         eb.not(
           eb.exists((eb) =>
-            eb
-              .selectFrom('album_asset')
-              .whereRef('assetId', '=', 'asset.id')
-              .where('sourceLibraryId', 'is', null),
+            eb.selectFrom('album_asset').whereRef('assetId', '=', 'asset.id').where('sourceLibraryId', 'is', null),
           ),
         ),
       ),
@@ -594,7 +591,10 @@ export function vectorIndexQuery({ vectorExtension, table, indexName, lists }: V
 }
 
 export const updateLockedColumns = <
-  T extends Record<string, unknown> & { lockedProperties?: LockableProperty[]; sidecarWriteProperties?: LockableProperty[] },
+  T extends Record<string, unknown> & {
+    lockedProperties?: LockableProperty[];
+    sidecarWriteProperties?: LockableProperty[];
+  },
 >(
   exif: T,
 ) => {

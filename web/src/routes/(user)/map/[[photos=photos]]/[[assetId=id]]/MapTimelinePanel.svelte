@@ -86,8 +86,13 @@
     isFavorite: $mapSettings.onlyFavorites || undefined,
     withPartners: $mapSettings.withPartners || undefined,
     // Drives the main bucket endpoints (not the map markers themselves) so the cluster side panel
-    // includes the same assets as the markers on the map (§4.4).
-    withSharedLibraries: $mapSettings.withSharedLibraries || undefined,
+    // includes the same assets as the markers on the map (§4.4). Dropped whenever 'Include archived'
+    // or 'Only favorites' is active (review finding): the server rejects withSharedLibraries combined
+    // with visibility=undefined or an isFavorite filter with a 400, and the marker side excludes
+    // shared libraries under isFavorite anyway - so dropping it here keeps the panel working AND
+    // consistent with what the markers show.
+    withSharedLibraries:
+      ($mapSettings.withSharedLibraries && !$mapSettings.includeArchived && !$mapSettings.onlyFavorites) || undefined,
     assetFilter: selectedClusterIds,
   });
 

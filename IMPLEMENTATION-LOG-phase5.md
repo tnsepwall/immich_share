@@ -416,3 +416,121 @@ than it was found in.
 - `getRandomFace`/feature-photo refresh is still not library-scoped (a pre-existing, Phase 4-documented
   rough edge, not touched by this phase and not required by it).
 - Full `e2e/` suite not run in this session (same standing gap noted in every prior phase's log).
+
+---
+
+## 9. Supervisor review findings and fixes (post-initial-commit)
+
+The supervisor review (three independent reviewers plus adversarial verification of each finding)
+confirmed 9 defects in the initial Phase 5 commits. All 9 were fixed, re-verified, and committed;
+each is documented below with its fix.
+
+### 9.1 HIGH — `createFace` guarded a mutation with the widened `PersonRead`
+
+`person.service.ts` `createFace()` (POST `/faces`) checked `dto.personId` with
+`Permission.PersonRead`, which Phase 5 widened to shared-library reachability. A sharee could
+therefore attach the **owner's** person to the sharee's own assets (their `AssetUpdate` passes,
+reachability satisfies `PersonRead`) — polluting the owner's person data, inflating owner-only
+statistics, and (when the person had no `faceAssetId`) setting the owner's person feature photo via
+`createNewFeaturePhoto`. **Fix**: the personId guard now uses `Permission.PersonUpdate`, which routes
+to `checkOwnerAccess` only. A full re-audit of every `requireAccess(Permission.PersonRead)` call site
+confirmed the remaining ones are all read-semantics (`getById`, `getThumbnail`, search/timeline
+`personId` filter validation) — every other person mutation path already used
+`PersonUpdate`/`PersonCreate`/`PersonMerge`/`PersonDelete`/`FaceDelete`/`PersonReassign`, all
+owner-scoped. New unit spec: shared-library reachability must not grant `createFace`, and the
+reachability check must not even be consulted.
+
+### 9.2 HIGH — owner's uploaded-asset stacks vanished (SQL NULL in `NOT IN`)
+
+`asset.repository.ts` `getTimeBucket`'s `stacked_assets` lateral guarded the shared-arm stack
+suppression with `asset.libraryId NOT IN (sharedLibraryIds)`. Uploaded assets have
+`libraryId IS NULL`, making that predicate SQL-`NULL` (falsy), so the lateral returned no rows —
+silently hiding the caller's (and partners') own uploaded-asset stack tuples whenever the caller had
+any inTimeline share. **Fix**: null-safe predicate
+`(libraryId IS NULL OR libraryId NOT IN (...))`. This was chosen over gating on
+`ownerId = auth.user.id` because it preserves the pre-existing partner-stack-tuple behavior while
+implementing exactly the intended invariant (only shared-library rows lose stack info).
+`getTimeBuckets`' collapse guard has the *opposite* shape (`libraryId IN (...)` as a positive OR arm,
+where NULL-falsy is the correct outcome), so it needed no change — verified, not assumed. New medium
+spec: a sharee with an inTimeline share still sees their own uploaded-asset stack collapsed to its
+primary with the `[stackId, count]` tuple intact, while the shared row carries none.
+
+### 9.3 HIGH — shared persons duplicated on every People page
+
+`person.service.ts` `getAll()` appended the shared-persons batch to **every** page of the paginated
+response, duplicating person ids across pages and breaking the web People page's keyed `{#each}`
+during infinite scroll. **Fix**: the batch is appended exactly once, on the final owner page
+(`hasNextPage === false`); `total` still includes the shared count on every page because the web
+reads it from page 1 only. New unit specs cover the multi-page and final-page cases.
+
+### 9.4 HIGH — clicking a shared person dead-ended
+
+The web person page's load called owner-only `getPersonStatistics` unconditionally (erroring the
+whole page for a shared person), and its timeline options lacked `withSharedLibraries` (so the
+timeline would have been empty anyway) — the exact flow plan §5.9 required verifying. **Fix**:
+`+page.ts` now falls back to `null` statistics on failure, the page hides the asset count when
+statistics are unavailable, and the timeline options pass `withSharedLibraries: true` (a no-op for
+owned persons, whose faces exist only on their own assets). Also applied the same
+`isAllUserOwned` guard around `<CreateSharedLink />` as on the photos/recently-added/map pages, since
+shared assets are now selectable here. §5.9 verified by a new medium spec: sharee + shared person +
+`personId` filter + `withSharedLibraries` returns exactly the shared assets containing that person.
+
+### 9.5 MEDIUM — hidden persons remained reachable by id
+
+`access.repository.ts` `checkSharedLibraryPersonAccess` and `person.repository.ts`
+`isFeatureFaceInSharedLibrary` had no `person.isHidden = false` filter, so a sharee retained by-id
+access (name via GET `/people/:id`, crop via the thumbnail endpoint, and the timeline/search
+`personId` filter oracle) to persons the owner had hidden — violating plan §5.3 ("hidden persons
+excluded from ALL sharee-facing surfaces"). **Fix**: both now require `isHidden = false` (the
+listing/search arms already did). New medium specs prove denial while hidden and restoration when
+un-hidden; the pre-existing `isFeatureFaceInSharedLibrary` specs were updated to attach real persons
+to their faces (the new join makes an unassigned face deny, which is the safe direction).
+
+### 9.6 MEDIUM — map markers `isFavorite` probe
+
+`GET /map/markers?withSharedLibraries=true&isFavorite=true` ANDed the owner-favorite filter across
+the shared-library OR-arm, enumerating exactly which shared assets the OWNER favorited — the same
+probe class the timeline rejects and search drops the shared arm for. **Fix**: `MapService`
+resolves `libraryIds` to `[]` whenever `options.isFavorite !== undefined`, mirroring
+`dropSharedLibraryProbe` semantics. New unit specs cover both the normal inclusion and the probe
+drop (including that the share lookup isn't even performed).
+
+### 9.7 MEDIUM — map cluster panel 400s when toggles combine
+
+`MapTimelinePanel.svelte` sent `withSharedLibraries` together with `visibility: undefined` (when
+"Include archived" is on) or `isFavorite` (when "Only favorites" is on) — combinations the timeline
+service's own guard rejects with 400, breaking the cluster side panel. **Fix**: the panel drops
+`withSharedLibraries` whenever either toggle is active, and `Map.svelte`'s marker request now does
+the same so markers and panel stay consistent: shared libraries participate in the map's default
+view only. (Without the marker-side change, "Include archived" would have shown shared markers with
+a panel that excluded them.)
+
+### 9.8 LOW — probe defense missed `encodedVideoPath` (and path-class siblings)
+
+`MetadataSearchDto` also exposes `encodedVideoPath` (wired by `searchAssetBuilder` to an exact match
+on the server-internal `asset_file.path`), plus `previewPath`/`thumbnailPath` (declared in
+`SearchPathOptions`, currently unwired — included as defense-in-depth). **Fix**: all three added to
+`dropSharedLibraryProbe` alongside `isFavorite`/`originalPath`/`checksum`. A sweep of the remaining
+`MetadataSearchDto`/`BaseSearchSchema` filters found no other server-internal-path/string filters
+(`libraryId` composes safely with the pinned shared-arm predicate; `rating`/`description`/`ocr` are
+content-class metadata visible on shared assets anyway).
+
+### 9.9 LOW — unservable shared-person thumbnails rendered as broken images
+
+`PeopleCard.svelte` rendered `ImageThumbnail`'s `BrokenAsset` placeholder when a shared person's
+thumbnail 404s (source asset of the crop not in a shared library), while the upgrade guide promised
+"a generic avatar". **Fix**: the card now tracks thumbnail load failure via `onComplete` and renders
+an initials avatar (first letters of up to two name words) or a generic person icon when the person
+is unnamed; the upgrade guide wording was aligned to say "an initials/generic avatar".
+
+### 9.10 Re-verification after the fixes
+
+| Gate | Result |
+|---|---|
+| `tsc --noEmit` (server, devcontainer) | clean |
+| server unit — person/map/search/timeline/library/asset service suites | 284/284 passed (includes 4 new specs) |
+| server medium — timeline service, access + person repositories | 80/80 passed (includes 4 new specs) |
+| server medium — search service | 17/17 passed |
+| SQL snapshots (`sync-sql.js` after rebuild) | regenerated; only the touched queries shifted |
+| server eslint / prettier | clean |
+| web `svelte-check` / eslint / prettier | clean |

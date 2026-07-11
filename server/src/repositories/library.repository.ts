@@ -7,8 +7,8 @@ import { DummyValue, GenerateSql } from 'src/decorators';
 import { LibraryStatsResponseDto } from 'src/dtos/library.dto';
 import { AssetType, AssetVisibility, LibraryUserRole } from 'src/enum';
 import { DB } from 'src/schema';
-import { LibraryTable } from 'src/schema/tables/library.table';
 import { LibraryUserTable } from 'src/schema/tables/library-user.table';
+import { LibraryTable } from 'src/schema/tables/library.table';
 
 export enum AssetSyncResult {
   DO_NOTHING,
@@ -18,9 +18,9 @@ export enum AssetSyncResult {
 }
 
 const withUser = (eb: ExpressionBuilder<DB, 'library_user'>) => {
-  return jsonObjectFrom(
-    eb.selectFrom('user').select(columns.user).whereRef('user.id', '=', 'library_user.userId'),
-  ).as('user');
+  return jsonObjectFrom(eb.selectFrom('user').select(columns.user).whereRef('user.id', '=', 'library_user.userId')).as(
+    'user',
+  );
 };
 
 const withLibraryOwner = (eb: ExpressionBuilder<DB, 'library'>) => {

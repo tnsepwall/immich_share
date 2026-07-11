@@ -95,7 +95,7 @@ const LibraryUserUpdateSchema = z
 // `inTimeline` preference, and neither side may touch the other's field through this route.
 const LibraryUserSelfUpdateSchema = z
   .object({
-    inTimeline: z.boolean().describe('Show this shared library\'s assets in your main timeline, explore, map & search'),
+    inTimeline: z.boolean().describe("Show this shared library's assets in your main timeline, explore, map & search"),
   })
   .meta({ id: 'LibraryUserSelfUpdateDto' });
 
@@ -106,7 +106,9 @@ const SharedLibraryResponseSchema = z
     ownerId: z.uuidv4().describe('Owner user ID'),
     owner: UserResponseSchema,
     role: LibraryUserRoleSchema,
-    inTimeline: z.boolean().describe('Whether this shared library appears in your main timeline, explore, map & search'),
+    inTimeline: z
+      .boolean()
+      .describe('Whether this shared library appears in your main timeline, explore, map & search'),
     createdAt: isoDatetimeToDate.describe('Creation date'),
     refreshedAt: isoDatetimeToDate.nullable().describe('Last refresh date'),
     assetCount: z.int().describe('Number of assets visible to the recipient'),
@@ -150,7 +152,10 @@ export class LibraryUserSelfUpdateDto extends createZodDto(LibraryUserSelfUpdate
 export class LibraryUserResponseDto extends createZodDto(LibraryUserResponseSchema) {}
 export class SharedLibraryResponseDto extends createZodDto(SharedLibraryResponseSchema) {}
 
-export function mapLibrary(entity: Library, options: { sharedUsers?: LibraryUserResponseDto[] } = {}): LibraryResponseDto {
+export function mapLibrary(
+  entity: Library,
+  options: { sharedUsers?: LibraryUserResponseDto[] } = {},
+): LibraryResponseDto {
   let assetCount = 0;
   if (entity.assets) {
     assetCount = entity.assets.length;

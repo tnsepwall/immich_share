@@ -2063,7 +2063,10 @@ describe(MetadataService.name, () => {
       // A shared-library Editor's database-only edit (library-editor.service.ts) appends to lockedProperties
       // only, never sidecarWriteProperties - simulate that split state directly: rating is locked (protected
       // from extraction) but NOT in the set handleSidecarWrite is told is pending a write.
-      const asset = AssetFactory.from().file({ type: AssetFileType.Sidecar }).exif({ description: 'owner text' }).build();
+      const asset = AssetFactory.from()
+        .file({ type: AssetFileType.Sidecar })
+        .exif({ description: 'owner text' })
+        .build();
       asset.exifInfo.rating = 5;
 
       mocks.assetJob.getSidecarWriteProperties.mockResolvedValue(['description']);

@@ -86,8 +86,14 @@ export class TimelineService extends BaseService {
 
       // Recipients (Viewer or Editor) get a fixed, safe filter set; owners keep full filter freedom.
       if (library.ownerId !== auth.user.id) {
-        const requestedNonTimelineVisibility = dto.visibility !== undefined && dto.visibility !== AssetVisibility.Timeline;
-        if (requestedNonTimelineVisibility || dto.isFavorite !== undefined || dto.isTrashed === true || dto.withPartners) {
+        const requestedNonTimelineVisibility =
+          dto.visibility !== undefined && dto.visibility !== AssetVisibility.Timeline;
+        if (
+          requestedNonTimelineVisibility ||
+          dto.isFavorite !== undefined ||
+          dto.isTrashed === true ||
+          dto.withPartners
+        ) {
           throw new BadRequestException(
             'Shared libraries only support browsing non-archived, non-trashed, non-favorited Timeline assets',
           );

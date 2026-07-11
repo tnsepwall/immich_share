@@ -1,8 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 import { JobName } from 'src/enum';
 import { LibraryEditorService } from 'src/services/library-editor.service';
-import { AssetFactory } from 'test/factories/asset.factory';
 import { AssetFaceFactory } from 'test/factories/asset-face.factory';
+import { AssetFactory } from 'test/factories/asset.factory';
 import { authStub } from 'test/fixtures/auth.stub';
 import { getForAsset } from 'test/mappers';
 import { factory } from 'test/small.factory';
@@ -53,9 +53,9 @@ describe(LibraryEditorService.name, () => {
       mocks.asset.updateLibraryAssetMetadata.mockResolvedValue([asset.id]);
       mocks.asset.getById.mockResolvedValue(getForAsset(asset));
 
-      await expect(
-        sut.updateAssets(authStub.user2, 'library-id', { ids: [asset.id], rating: 3 }),
-      ).resolves.toEqual([expect.objectContaining({ id: asset.id })]);
+      await expect(sut.updateAssets(authStub.user2, 'library-id', { ids: [asset.id], rating: 3 })).resolves.toEqual([
+        expect.objectContaining({ id: asset.id }),
+      ]);
     });
 
     it('should throw when the repository primitive finds nothing to write (revoked mid-flight or out-of-scope asset)', async () => {
@@ -342,12 +342,9 @@ describe(LibraryEditorService.name, () => {
 
       const result = await sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] });
 
-      expect(mocks.person.createPersonForLibrary).toHaveBeenCalledWith(
-        'library-id',
-        authStub.user1.user.id,
-        'Alice',
-        ['face-1'],
-      );
+      expect(mocks.person.createPersonForLibrary).toHaveBeenCalledWith('library-id', authStub.user1.user.id, 'Alice', [
+        'face-1',
+      ]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
         { name: JobName.PersonGenerateThumbnail, data: { id: 'new-person' } },
       ]);
@@ -467,9 +464,7 @@ describe(LibraryEditorService.name, () => {
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
       mocks.access.library.checkEditorAccess.mockResolvedValue(new Set());
 
-      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.person.createManualFaceForLibrary).not.toHaveBeenCalled();
     });
 
@@ -477,9 +472,7 @@ describe(LibraryEditorService.name, () => {
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
       mocks.asset.getById.mockResolvedValue(undefined as any);
 
-      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.person.createManualFaceForLibrary).not.toHaveBeenCalled();
     });
 
@@ -494,9 +487,7 @@ describe(LibraryEditorService.name, () => {
       mocks.asset.getById.mockResolvedValue(getForAsset(asset));
       mocks.person.createManualFaceForLibrary.mockResolvedValue(null);
 
-      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(sut.createManualFace(authStub.user1, 'library-id', dto)).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.job.queueAll).not.toHaveBeenCalled();
     });
 

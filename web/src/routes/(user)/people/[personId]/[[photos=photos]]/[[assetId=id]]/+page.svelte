@@ -62,12 +62,19 @@
 
   let { data }: Props = $props();
 
-  let numberOfAssets = $derived(data.statistics.assets);
+  // Statistics are owner-only (Phase 5) - null for a person reached through a shared library.
+  let numberOfAssets = $derived(data.statistics?.assets);
   let person = $derived(data.person);
   let thumbnailData = $derived(getPeopleThumbnailUrl(person));
 
   let timelineManager = $state<TimelineManager>() as TimelineManager;
-  const options = $derived({ visibility: AssetVisibility.Timeline, personId: data.person.id });
+  // withSharedLibraries makes a shared-library person's timeline actually load (plan §5.9); for the
+  // caller's own persons the shared arm is a no-op since their faces only exist on their own assets.
+  const options = $derived({
+    visibility: AssetVisibility.Timeline,
+    personId: data.person.id,
+    withSharedLibraries: true,
+  });
 
   let viewMode: PersonPageViewMode = $state(PersonPageViewMode.VIEW_ASSETS);
   let isEditingName = $state(false);
@@ -390,9 +397,11 @@
                   />
                   <div class="flex flex-col justify-center px-4 text-start text-primary">
                     <p class="w-40 truncate font-medium sm:w-72">{person.name || $t('add_a_name')}</p>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">
-                      {$t('assets_count', { values: { count: numberOfAssets } })}
-                    </p>
+                    {#if numberOfAssets !== undefined}
+                      <p class="text-sm text-gray-500 dark:text-gray-400">
+                        {$t('assets_count', { values: { count: numberOfAssets } })}
+                      </p>
+                    {/if}
                     {#if person.birthDate}
                       <p class="text-sm text-gray-500 dark:text-gray-400">
                         {$t('person_birthdate', {
@@ -461,7 +470,11 @@
     <AssetSelectControlBar>
       {@const Actions = getAssetBulkActions($t)}
       <CommandPaletteDefaultProvider name={$t('assets')} actions={Object.values(Actions)} />
-      <CreateSharedLink />
+      <!-- Same guard as the photos/recently-added/map pages: a shared link cannot be created over
+           another owner's (shared-library) assets, which can now appear here via withSharedLibraries. -->
+      {#if assetMultiSelectManager.isAllUserOwned}
+        <CreateSharedLink />
+      {/if}
       <SelectAllAssets {timelineManager} assetInteraction={assetMultiSelectManager} />
       <ActionButton action={Actions.AddToAlbum} />
       <FavoriteAction

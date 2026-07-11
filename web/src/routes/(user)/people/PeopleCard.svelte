@@ -8,6 +8,7 @@
   import { type PersonResponseDto } from '@immich/sdk';
   import { Icon } from '@immich/ui';
   import {
+    mdiAccount,
     mdiAccountMultipleCheckOutline,
     mdiDotsVertical,
     mdiEyeOffOutline,
@@ -29,6 +30,19 @@
   let { person, onMergePeople, onHidePerson, onToggleFavorite }: Props = $props();
 
   let showVerticalDots = $state(false);
+  // Phase 5 review finding fix: a shared-library person's thumbnail may be unservable (the source
+  // asset of the crop isn't in a library shared with the viewer), so fall back to an initials/generic
+  // avatar instead of ImageThumbnail's BrokenAsset placeholder.
+  let thumbnailErrored = $state(false);
+
+  const initials = $derived(
+    (person.name ?? '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((word) => word[0]!.toUpperCase())
+      .join(''),
+  );
 
   const { SetDateOfBirth } = $derived(getPersonActions($t, person));
 </script>
@@ -47,15 +61,29 @@
     onfocus={() => (showVerticalDots = true)}
   >
     <div class="size-full rounded-xl brightness-95 filter">
-      <ImageThumbnail
-        shadow
-        url={getPeopleThumbnailUrl(person)}
-        altText={person.name}
-        title={person.name}
-        widthStyle="100%"
-        circle
-        preload={false}
-      />
+      {#if thumbnailErrored}
+        <div
+          class="flex aspect-square w-full items-center justify-center rounded-full bg-gray-200 shadow-lg dark:bg-gray-700"
+          title={person.name}
+        >
+          {#if initials}
+            <span class="text-3xl font-medium text-gray-500 select-none dark:text-gray-300">{initials}</span>
+          {:else}
+            <Icon icon={mdiAccount} size="45%" class="text-gray-400 dark:text-gray-400" />
+          {/if}
+        </div>
+      {:else}
+        <ImageThumbnail
+          shadow
+          url={getPeopleThumbnailUrl(person)}
+          altText={person.name}
+          title={person.name}
+          widthStyle="100%"
+          circle
+          preload={false}
+          onComplete={(errored) => (thumbnailErrored = errored)}
+        />
+      {/if}
       {#if person.isFavorite}
         <div class="absolute inset-s-4 top-4">
           <Icon icon={mdiHeart} size="24" class="text-white" />

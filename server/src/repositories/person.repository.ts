@@ -112,7 +112,9 @@ const withLibraryThumbnailFace = (libraryId: string) => (eb: ExpressionBuilder<D
 const checkLibraryEditorAccessTx = async (trx: Transaction<DB>, libraryId: string, actorId: string) => {
   const library = await trx
     .selectFrom('library')
-    .innerJoin('user as owner', (join) => join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null))
+    .innerJoin('user as owner', (join) =>
+      join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+    )
     .select('library.ownerId')
     .where('library.id', '=', libraryId)
     .where('library.deletedAt', 'is', null)
@@ -136,7 +138,11 @@ const checkLibraryEditorAccessTx = async (trx: Transaction<DB>, libraryId: strin
   return share?.role === LibraryUserRole.Editor ? library : null;
 };
 
-const getInScopeFaceIdsTx = async (trx: Transaction<DB>, libraryId: string, faceIds: string[]): Promise<Set<string>> => {
+const getInScopeFaceIdsTx = async (
+  trx: Transaction<DB>,
+  libraryId: string,
+  faceIds: string[],
+): Promise<Set<string>> => {
   if (faceIds.length === 0) {
     return new Set();
   }
@@ -153,7 +159,11 @@ const getInScopeFaceIdsTx = async (trx: Transaction<DB>, libraryId: string, face
   return new Set(rows.map((row) => row.id));
 };
 
-const isPersonInLibraryScopeTx = async (trx: Transaction<DB>, libraryId: string, personId: string): Promise<boolean> => {
+const isPersonInLibraryScopeTx = async (
+  trx: Transaction<DB>,
+  libraryId: string,
+  personId: string,
+): Promise<boolean> => {
   const result = await trx
     .selectFrom('person')
     .select('person.id')
@@ -493,7 +503,10 @@ export class PersonRepository {
       .where('asset_face.isVisible', '=', true)
       .groupBy('person.id')
       .having((eb) =>
-        eb.or([eb('person.name', '!=', ''), eb((innerEb) => innerEb.fn.count('asset_face.assetId'), '>=', minimumFaces)]),
+        eb.or([
+          eb('person.name', '!=', ''),
+          eb((innerEb) => innerEb.fn.count('asset_face.assetId'), '>=', minimumFaces),
+        ]),
       )
       .orderBy(sql`NULLIF(person.name, '') is null`, 'asc')
       .orderBy(sql`NULLIF(person.name, '')`, (om) => om.asc().nullsLast())
@@ -566,13 +579,22 @@ export class PersonRepository {
     const result = await this.db
       .selectFrom('asset_face')
       .innerJoin('asset', (join) => join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null))
-      .innerJoin('library', (join) => join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null))
-      .innerJoin('user as owner', (join) => join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null))
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
       .innerJoin('library_user', (join) =>
         join
           .onRef('library_user.libraryId', '=', 'library.id')
           .on('library_user.userId', '=', userId)
           .on('library_user.inTimeline', '=', true),
+      )
+      // Review finding fix (plan §5.3): never serve the crop of a person the owner has hidden -
+      // hidden persons are excluded from every sharee-facing surface, this gate included.
+      .innerJoin('person', (join) =>
+        join.onRef('person.id', '=', 'asset_face.personId').on('person.isHidden', '=', false),
       )
       .select('asset_face.id')
       .where('asset_face.id', '=', faceId)

@@ -289,13 +289,29 @@ export class SearchService extends BaseService {
   }
 
   // Probe defenses (plan §3.2): a sharee filtering on the OWNER's isFavorite flag, or attempting to
-  // probe the owner's filesystem strings (originalPath) or exact file checksum, must never get an
-  // answer widened by a library they don't own - fall back to owner(+partner)-arm-only results.
+  // probe the owner's filesystem strings (originalPath, and per review finding also the
+  // server-internal generated previewPath/thumbnailPath/encodedVideoPath) or exact file checksum,
+  // must never get an answer widened by a library they don't own - fall back to
+  // owner(+partner)-arm-only results.
   private dropSharedLibraryProbe(
     sharedLibraryIds: string[],
-    dto: { isFavorite?: boolean; originalPath?: string; checksum?: string },
+    dto: {
+      isFavorite?: boolean;
+      originalPath?: string;
+      checksum?: string;
+      previewPath?: string;
+      thumbnailPath?: string;
+      encodedVideoPath?: string;
+    },
   ): string[] {
-    if (dto.isFavorite !== undefined || dto.originalPath !== undefined || dto.checksum !== undefined) {
+    if (
+      dto.isFavorite !== undefined ||
+      dto.originalPath !== undefined ||
+      dto.checksum !== undefined ||
+      dto.previewPath !== undefined ||
+      dto.thumbnailPath !== undefined ||
+      dto.encodedVideoPath !== undefined
+    ) {
       return [];
     }
     return sharedLibraryIds;

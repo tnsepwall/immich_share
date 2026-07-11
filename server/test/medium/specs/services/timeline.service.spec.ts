@@ -423,6 +423,87 @@ describe(TimelineService.name, () => {
       expect(response.stack).toEqual([null, null]);
     });
 
+    // Review finding: uploaded assets have libraryId IS NULL, and the shared-arm lateral guard used a
+    // bare NOT IN - SQL NULL for those rows - which silently dropped the caller's OWN uploaded-asset
+    // stack tuples the moment they had any inTimeline shared library.
+    it('should keep the sharee own uploaded-asset stacks intact when a shared library is in the timeline', async () => {
+      const { sut, ctx } = setup();
+      const { sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { asset: sharedAsset } = await ctx.newAsset({
+        ownerId: library.ownerId,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      // the sharee's own UPLOADED (libraryId = null) stacked assets
+      const { asset: primary } = await ctx.newAsset({
+        ownerId: sharee.id,
+        libraryId: null,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: secondary } = await ctx.newAsset({
+        ownerId: sharee.id,
+        libraryId: null,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      for (const asset of [sharedAsset, primary, secondary]) {
+        await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+      }
+      const { stack } = await ctx.newStack({ ownerId: sharee.id }, [primary.id, secondary.id]);
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+
+      // bucket counts: the non-primary member stays collapsed (2 rows: shared asset + stack primary)
+      const buckets = await sut.getTimeBuckets(auth, {
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+        withStacked: true,
+      });
+      expect(buckets).toEqual([{ count: 2, timeBucket: '1970-02-01' }]);
+
+      // bucket assets: the primary must still carry its stack tuple [stackId, memberCount]
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+        withStacked: true,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id.toSorted()).toEqual([sharedAsset.id, primary.id].toSorted());
+      const primaryIndex = response.id.indexOf(primary.id);
+      const sharedIndex = response.id.indexOf(sharedAsset.id);
+      expect(response.stack[primaryIndex]).toEqual([stack.id, '2']);
+      expect(response.stack[sharedIndex]).toBeNull();
+    });
+
+    // Plan §5.9 verification (review finding): a sharee opening a shared person must see the shared
+    // assets containing that person - personId filter combined with withSharedLibraries.
+    it('should surface shared assets for a shared person via the personId filter', async () => {
+      const { sut, ctx } = setup();
+      const { owner, sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+        personId: person.id,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id).toEqual([asset.id]);
+    });
+
     it('should redact livePhotoVideoId for a shared-library asset', async () => {
       const { sut, ctx } = setup();
       const { owner, sharee, library } = await setupShare(ctx, { inTimeline: true });

@@ -276,7 +276,12 @@ export class LibraryService extends BaseService {
     return sharedUsers.map((user) => mapLibraryUser(user));
   }
 
-  async updateUserRole(auth: AuthDto, id: string, userId: string, dto: LibraryUserUpdateDto): Promise<LibraryUserResponseDto> {
+  async updateUserRole(
+    auth: AuthDto,
+    id: string,
+    userId: string,
+    dto: LibraryUserUpdateDto,
+  ): Promise<LibraryUserResponseDto> {
     if (!auth.user.isAdmin) {
       await this.requireAccess({ auth, permission: Permission.LibraryShare, ids: [id] });
     }

@@ -271,9 +271,7 @@ describe(AccessRepository.name, () => {
       });
       const { assetFace } = await ctx.newAssetFace({ assetId: asset.id });
 
-      await expect(sut.person.checkLibraryFaceScope(library1.id, new Set([assetFace.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(sut.person.checkLibraryFaceScope(library1.id, new Set([assetFace.id]))).resolves.toEqual(new Set());
     });
 
     it('should exclude a soft-deleted face', async () => {
@@ -292,9 +290,7 @@ describe(AccessRepository.name, () => {
         .where('id', '=', assetFace.id)
         .execute();
 
-      await expect(sut.person.checkLibraryFaceScope(library.id, new Set([assetFace.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(sut.person.checkLibraryFaceScope(library.id, new Set([assetFace.id]))).resolves.toEqual(new Set());
     });
 
     it('should exclude a hidden (isVisible=false) face', async () => {
@@ -308,9 +304,7 @@ describe(AccessRepository.name, () => {
       });
       const { assetFace } = await ctx.newAssetFace({ assetId: asset.id, isVisible: false });
 
-      await expect(sut.person.checkLibraryFaceScope(library.id, new Set([assetFace.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(sut.person.checkLibraryFaceScope(library.id, new Set([assetFace.id]))).resolves.toEqual(new Set());
     });
 
     it('should return only the matching subset of a mixed request', async () => {
@@ -478,7 +472,12 @@ describe(AccessRepository.name, () => {
       const { user: owner } = await ctx.newUser();
       const { user: sharee } = await ctx.newUser();
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
-      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: true });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
       const { asset } = await ctx.newAsset({
         ownerId: owner.id,
         libraryId: library.id,
@@ -497,7 +496,12 @@ describe(AccessRepository.name, () => {
       const { user: owner } = await ctx.newUser();
       const { user: sharee } = await ctx.newUser();
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
-      await newLibraryUser(ctx, { libraryId: library.id, userId: sharee.id, role: LibraryUserRole.Viewer, inTimeline: false });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: false,
+      });
       const { asset } = await ctx.newAsset({
         ownerId: owner.id,
         libraryId: library.id,
@@ -551,6 +555,39 @@ describe(AccessRepository.name, () => {
 
       await expect(sut.person.checkSharedLibraryPersonAccess(stranger.id, new Set([person.id]))).resolves.toEqual(
         new Set(),
+      );
+    });
+
+    // Review finding (plan §5.3): a person the owner has HIDDEN must be excluded from every
+    // sharee-facing surface - including this by-id reachability check, which backs GET /people/:id,
+    // the person thumbnail, and the timeline/search personId filters.
+    it('should exclude a person the owner has hidden, even when otherwise reachable', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id, isHidden: true });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
+        new Set(),
+      );
+
+      // sanity check: un-hiding the person restores reachability, proving isHidden was the only gate
+      await ctx.database.updateTable('person').set({ isHidden: false }).where('id', '=', person.id).execute();
+      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
+        new Set([person.id]),
       );
     });
   });
