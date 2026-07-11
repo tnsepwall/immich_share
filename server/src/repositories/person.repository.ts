@@ -465,6 +465,123 @@ export class PersonRepository {
       .executeTakeFirst();
   }
 
+  // Phase 5 (§5.5): people listing widening - persons reachable through ANY of the caller's
+  // inTimeline-shared libraries, unioned into the People page/Explore row alongside the caller's own
+  // people (person.service.ts#getAll combines the two result sets). Always excludes hidden persons
+  // (never gated by the caller's own `withHidden` preference - that flag is about the CALLER's own
+  // people, never someone else's) and the minimumFaces threshold counts ONLY faces inside the shared
+  // libraries - a person's global footprint size must never be advertised to a sharee.
+  @GenerateSql({ params: [[DummyValue.UUID], { take: 500 }, 3] })
+  async getAllForSharedLibraries(sharedLibraryIds: string[], pagination: PaginationOptions, minimumFaces: number) {
+    if (sharedLibraryIds.length === 0) {
+      return paginationHelper<Selectable<PersonTable>>([], pagination.take);
+    }
+
+    const items = await this.db
+      .selectFrom('person')
+      .selectAll('person')
+      .innerJoin('asset_face', 'asset_face.personId', 'person.id')
+      .innerJoin('asset', (join) =>
+        join
+          .onRef('asset_face.assetId', '=', 'asset.id')
+          .on('asset.libraryId', 'in', sharedLibraryIds)
+          .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+          .on('asset.deletedAt', 'is', null),
+      )
+      .where('person.isHidden', '=', false)
+      .where('asset_face.deletedAt', 'is', null)
+      .where('asset_face.isVisible', '=', true)
+      .groupBy('person.id')
+      .having((eb) =>
+        eb.or([eb('person.name', '!=', ''), eb((innerEb) => innerEb.fn.count('asset_face.assetId'), '>=', minimumFaces)]),
+      )
+      .orderBy(sql`NULLIF(person.name, '') is null`, 'asc')
+      .orderBy(sql`NULLIF(person.name, '')`, (om) => om.asc().nullsLast())
+      .orderBy('person.createdAt')
+      .offset(pagination.skip ?? 0)
+      .limit(pagination.take + 1)
+      .execute();
+
+    return paginationHelper(items, pagination.take);
+  }
+
+  // Phase 5 (§5.4): person NAME SEARCH widened alongside the owner's own persons - ORs
+  // `person.ownerId = userId` with an EXISTS over the same reachability shape as
+  // AccessRepository#checkSharedLibraryPersonAccess (§5.1). Deliberately a NEW method - getDistinctNames
+  // keeps its owner-scoped semantics unchanged (metadata.service.ts depends on it for sidecar name
+  // matching, which must never resolve to another user's person). Hidden persons are excluded from the
+  // shared arm unconditionally; the owner arm still honors the caller's own `withHidden` preference.
+  @GenerateSql({ params: [DummyValue.UUID, [DummyValue.UUID], DummyValue.STRING, { withHidden: true }] })
+  getByNameWithSharedLibraries(
+    userId: string,
+    sharedLibraryIds: string[],
+    personName: string,
+    { withHidden }: PersonNameSearchOptions,
+  ) {
+    return this.db
+      .with('similarity_threshold', (db) =>
+        db.selectNoFrom(sql`set_config('pg_trgm.word_similarity_threshold', '0.5', true)`.as('thresh')),
+      )
+      .selectFrom(['similarity_threshold', 'person'])
+      .selectAll('person')
+      .where(() => sql`f_unaccent("person"."name") %> f_unaccent(${personName})`)
+      .where((eb) => {
+        const ownerArm = withHidden
+          ? eb('person.ownerId', '=', userId)
+          : eb.and([eb('person.ownerId', '=', userId), eb('person.isHidden', '=', false)]);
+
+        if (sharedLibraryIds.length === 0) {
+          return ownerArm;
+        }
+
+        const sharedArm = eb.and([
+          eb('person.isHidden', '=', false),
+          eb.exists(
+            eb
+              .selectFrom('asset_face')
+              .innerJoin('asset', (join) =>
+                join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
+              )
+              .whereRef('asset_face.personId', '=', 'person.id')
+              .where('asset_face.deletedAt', 'is', null)
+              .where('asset_face.isVisible', '=', true)
+              .where('asset.libraryId', 'in', sharedLibraryIds)
+              .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+          ),
+        ]);
+
+        return eb.or([ownerArm, sharedArm]);
+      })
+      .orderBy(sql`f_unaccent("person"."name") <->>> f_unaccent(${personName})`)
+      .limit(100)
+      .execute();
+  }
+
+  // Phase 5 (§5.6): person thumbnail gate - the global thumbnailPath may be cropped from an asset
+  // outside any library shared with this caller, so serving it to a non-owner is permitted ONLY when
+  // the person's OWN feature face's source asset is itself in an inTimeline-shared library.
+  // Reachability through some OTHER face is not sufficient (that's the whole point of this check).
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async isFeatureFaceInSharedLibrary(userId: string, faceId: string): Promise<boolean> {
+    const result = await this.db
+      .selectFrom('asset_face')
+      .innerJoin('asset', (join) => join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null))
+      .innerJoin('library', (join) => join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null))
+      .innerJoin('user as owner', (join) => join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null))
+      .innerJoin('library_user', (join) =>
+        join
+          .onRef('library_user.libraryId', '=', 'library.id')
+          .on('library_user.userId', '=', userId)
+          .on('library_user.inTimeline', '=', true),
+      )
+      .select('asset_face.id')
+      .where('asset_face.id', '=', faceId)
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .executeTakeFirst();
+
+    return !!result;
+  }
+
   @GenerateSql()
   getAllWithoutFaces() {
     return this.db

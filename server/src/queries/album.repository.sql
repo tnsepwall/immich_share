@@ -77,6 +77,29 @@ select
         where
           "album_asset"."albumId" = "album"."id"
           and "asset"."deletedAt" is null
+          and (
+            "album_asset"."sourceLibraryId" is null
+            or exists (
+              select
+              from
+                "asset"
+                inner join "library" on "library"."id" = "asset"."libraryId"
+                and "library"."deletedAt" is null
+                inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+                and "owner"."deletedAt" is null
+                left join "library_user" on "library_user"."libraryId" = "library"."id"
+                and "library_user"."userId" = $3
+              where
+                "asset"."id" = "album_asset"."assetId"
+                and "library"."id" = "album_asset"."sourceLibraryId"
+                and "asset"."deletedAt" is null
+                and "asset"."visibility" = 'timeline'
+                and (
+                  "library"."ownerId" = $4
+                  or "library_user"."userId" is not null
+                )
+            )
+          )
           and "asset"."visibility" in ('archive', 'timeline')
         order by
           "asset"."fileCreatedAt" desc
@@ -85,7 +108,7 @@ select
 from
   "album"
 where
-  "album"."id" = $3
+  "album"."id" = $5
   and "album"."deletedAt" is null
 
 -- AlbumRepository.getByAssetId
@@ -142,6 +165,29 @@ where
   )
   and "album_asset"."assetId" = $3
   and "album"."deletedAt" is null
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $4
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $5
+          or "library_user"."userId" is not null
+        )
+    )
+  )
 order by
   "album"."createdAt" desc
 
@@ -163,6 +209,29 @@ where
   )
   and "album_asset"."assetId" in ($2)
   and "album"."deletedAt" is null
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $3
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $4
+          or "library_user"."userId" is not null
+        )
+    )
+  )
 
 -- AlbumRepository.getMetadataForIds
 select
@@ -182,6 +251,29 @@ where
   "asset"."visibility" in ('archive', 'timeline')
   and "album_asset"."albumId" in ($1)
   and "asset"."deletedAt" is null
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $2
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $3
+          or "library_user"."userId" is not null
+        )
+    )
+  )
 group by
   "album_asset"."albumId"
 
@@ -320,7 +412,16 @@ from
     select
       1
   ) as "dummy"
-on conflict do nothing
+on conflict ("albumId", "assetId") do update
+set
+  "sourceLibraryId" = $3
+
+-- AlbumRepository.addLibraryAssetIds
+insert into
+  "album_asset" ("albumId", "assetId", "sourceLibraryId")
+values
+  ($1, $2, $3)
+on conflict ("albumId", "assetId") do nothing
 
 -- AlbumRepository.create
 with
@@ -334,7 +435,7 @@ with
   ),
   "album_user" as (
     insert into
-      "album_user"
+      "album_user" ("albumId", "userId", "role")
     select
       "album"."id" as "albumId",
       unnest($2::uuid[]) as "userId",
@@ -348,16 +449,18 @@ with
   ),
   "album_asset" as (
     insert into
-      "album_asset"
+      "album_asset" ("albumId", "assetId", "sourceLibraryId")
     select
       "album"."id" as "albumId",
-      unnest($4::uuid[]) as "assetId"
+      unnest($4::uuid[]) as "assetId",
+      unnest($5::uuid[]) as "sourceLibraryId"
     from
       "album"
     on conflict do nothing
     returning
       "album_asset"."albumId",
-      "album_asset"."assetId"
+      "album_asset"."assetId",
+      "album_asset"."sourceLibraryId"
   )
 select
   "album".*,
@@ -412,6 +515,10 @@ select
         where
           "album_asset"."albumId" = "album"."id"
           and "asset"."deletedAt" is null
+          and (
+            "album_asset"."sourceLibraryId" is null
+            or false
+          )
           and "asset"."visibility" in ('archive', 'timeline')
         order by
           "asset"."fileCreatedAt" desc
@@ -430,17 +537,52 @@ from
 where
   "asset"."deletedAt" is null
   and "album_asset"."albumId" = $1
+  and (
+    "album_asset"."sourceLibraryId" is null
+    or exists (
+      select
+      from
+        "asset"
+        inner join "library" on "library"."id" = "asset"."libraryId"
+        and "library"."deletedAt" is null
+        inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+        and "owner"."deletedAt" is null
+        left join "library_user" on "library_user"."libraryId" = "library"."id"
+        and "library_user"."userId" = $2
+      where
+        "asset"."id" = "album_asset"."assetId"
+        and "library"."id" = "album_asset"."sourceLibraryId"
+        and "asset"."deletedAt" is null
+        and "asset"."visibility" = 'timeline'
+        and (
+          "library"."ownerId" = $3
+          or "library_user"."userId" is not null
+        )
+    )
+  )
 group by
   "asset"."ownerId"
 order by
   "assetCount" desc
 
+-- AlbumRepository.hasProvenanceAssets
+select
+  "assetId"
+from
+  "album_asset"
+where
+  "albumId" = $1
+  and "sourceLibraryId" is not null
+limit
+  $2
+
 -- AlbumRepository.copyAlbums
 insert into
-  "album_asset"
+  "album_asset" ("albumId", "assetId", "sourceLibraryId")
 select
   "album_asset"."albumId",
-  $1 as "assetId"
+  $1 as "assetId",
+  "album_asset"."sourceLibraryId"
 from
   "album_asset"
 where

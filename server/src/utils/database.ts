@@ -301,6 +301,24 @@ export function withAlbumAssetProvenance(userId: string | null) {
     ]);
 }
 
+/**
+ * Phase 5 (FEATURE-PLAN-phase5-global-surfaces.md §0.2): the canonical "shared arm" predicate used
+ * verbatim on every widened read surface (timeline, search, explore, map) - true for an asset reachable
+ * via a library the caller has opted into seeing in these surfaces (library_user.inTimeline = true),
+ * pinned to Timeline visibility and non-deleted INSIDE this branch regardless of whatever
+ * isTrashed/isFavorite/visibility filter the surrounding query applies to the owner arm. This is the
+ * ONLY inclusion mechanism - never add the library owner's userId to any userIds array, which would
+ * leak the owner's uploads and every other library they have.
+ */
+export function withSharedLibraryAssets(sharedLibraryIds: string[]) {
+  return (eb: ExpressionBuilder<DB, 'asset'>) =>
+    eb.and([
+      eb('asset.libraryId', 'in', sharedLibraryIds),
+      eb('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
+      eb('asset.deletedAt', 'is', null),
+    ]);
+}
+
 export function hasTags<O>(qb: SelectQueryBuilder<DB, 'asset', O>, tagIds: string[]) {
   return qb.innerJoin(
     (eb) =>
@@ -473,7 +491,14 @@ export function searchAssetBuilder(kysely: Kysely<DB>, options: AssetSearchBuild
     .$if(!!options.checksum, (qb) => qb.where('asset.checksum', '=', options.checksum!))
     .$if(!!options.id, (qb) => qb.where('asset.id', '=', asUuid(options.id!)))
     .$if(!!options.libraryId, (qb) => qb.where('asset.libraryId', '=', asUuid(options.libraryId!)))
-    .$if(!!options.userIds, (qb) => qb.where('asset.ownerId', '=', anyUuid(options.userIds!)))
+    .$if(!!options.userIds, (qb) =>
+      qb.where((eb) => {
+        const ownerArm = eb('asset.ownerId', '=', anyUuid(options.userIds!));
+        return options.sharedLibraryIds && options.sharedLibraryIds.length > 0
+          ? eb.or([ownerArm, withSharedLibraryAssets(options.sharedLibraryIds)(eb)])
+          : ownerArm;
+      }),
+    )
     .$if(!!options.encodedVideoPath, (qb) =>
       qb
         .innerJoin('asset_file', (join) =>

@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Kysely, OrderByDirection, Selectable, ShallowDehydrateObject, sql } from 'kysely';
+import { ExpressionBuilder, Kysely, OrderByDirection, Selectable, ShallowDehydrateObject, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { DummyValue, GenerateSql } from 'src/decorators';
 import { AssetStatus, AssetType, AssetVisibility, VectorIndex } from 'src/enum';
 import { probes } from 'src/repositories/database.repository';
 import { DB } from 'src/schema';
 import { AssetExifTable } from 'src/schema/tables/asset-exif.table';
-import { anyUuid, searchAssetBuilder, withExifInner } from 'src/utils/database';
+import { anyUuid, searchAssetBuilder, withExifInner, withSharedLibraryAssets } from 'src/utils/database';
 import { paginationHelper } from 'src/utils/pagination';
 import z from 'zod';
 
@@ -18,6 +18,13 @@ export interface SearchAssetIdOptions {
 export interface SearchUserIdOptions {
   libraryId?: string | null;
   userIds?: string[];
+  /**
+   * Phase 5: opted-in shared-library ids (library_user.inTimeline = true) included via a separate
+   * OR-branch on asset.libraryId, alongside `userIds` - never by adding the library owner's id to
+   * `userIds` itself. See `withSharedLibraryAssets` in utils/database.ts for the exact predicate;
+   * `searchAssetBuilder` drops this to empty for probe-prone filters (isFavorite/originalPath/checksum).
+   */
+  sharedLibraryIds?: string[];
 }
 
 export type SearchIdOptions = SearchAssetIdOptions & SearchUserIdOptions;
@@ -379,15 +386,32 @@ export class SearchRepository {
       .execute();
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID]] })
-  getAssetsByCity(userIds: string[]) {
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID]] })
+  getAssetsByCity(userIds: string[], sharedLibraryIds: string[] = []) {
+    // Phase 5 shared arm (§0.2), applied to BOTH CTE arms (base + recursive) - written verbatim here
+    // rather than the shared `withSharedLibraryAssets` helper since this query joins asset_exif
+    // alongside asset, which doesn't structurally match that helper's single-table signature.
+    const withOwnerOrSharedLibrary = (eb: ExpressionBuilder<DB, 'asset' | 'asset_exif'>) => {
+      const ownerArm = eb('asset.ownerId', '=', anyUuid(userIds));
+      return sharedLibraryIds.length > 0
+        ? eb.or([
+            ownerArm,
+            eb.and([
+              eb('asset.libraryId', 'in', sharedLibraryIds),
+              eb('asset.visibility', '=', AssetVisibility.Timeline),
+              eb('asset.deletedAt', 'is', null),
+            ]),
+          ])
+        : ownerArm;
+    };
+
     return this.db
       .withRecursive('cte', (qb) => {
         const base = qb
           .selectFrom('asset_exif')
           .select(['city', 'assetId'])
           .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
-          .where('asset.ownerId', '=', anyUuid(userIds))
+          .where(withOwnerOrSharedLibrary)
           .where('asset.visibility', '=', AssetVisibility.Timeline)
           .where('asset.type', '=', AssetType.Image)
           .where('asset.deletedAt', 'is', null)
@@ -403,7 +427,7 @@ export class SearchRepository {
                 .selectFrom('asset_exif')
                 .select(['city', 'assetId'])
                 .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
-                .where('asset.ownerId', '=', anyUuid(userIds))
+                .where(withOwnerOrSharedLibrary)
                 .where('asset.visibility', '=', AssetVisibility.Timeline)
                 .where('asset.type', '=', AssetType.Image)
                 .where('asset.deletedAt', 'is', null)
@@ -438,23 +462,27 @@ export class SearchRepository {
       .execute();
   }
 
-  async getCountries(userIds: string[]): Promise<string[]> {
-    const res = await this.getExifField('country', userIds).execute();
+  async getCountries(userIds: string[], sharedLibraryIds: string[] = []): Promise<string[]> {
+    const res = await this.getExifField('country', userIds, sharedLibraryIds).execute();
     return res.map((row) => row.country!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING] })
-  async getStates(userIds: string[], { country }: GetStatesOptions): Promise<string[]> {
-    const res = await this.getExifField('state', userIds)
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], DummyValue.STRING] })
+  async getStates(userIds: string[], sharedLibraryIds: string[], { country }: GetStatesOptions): Promise<string[]> {
+    const res = await this.getExifField('state', userIds, sharedLibraryIds)
       .$if(!!country, (qb) => qb.where('country', '=', country!))
       .execute();
 
     return res.map((row) => row.state!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
-  async getCities(userIds: string[], { country, state }: GetCitiesOptions): Promise<string[]> {
-    const res = await this.getExifField('city', userIds)
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
+  async getCities(
+    userIds: string[],
+    sharedLibraryIds: string[],
+    { country, state }: GetCitiesOptions,
+  ): Promise<string[]> {
+    const res = await this.getExifField('city', userIds, sharedLibraryIds)
       .$if(!!country, (qb) => qb.where('country', '=', country!))
       .$if(!!state, (qb) => qb.where('state', '=', state!))
       .execute();
@@ -462,9 +490,13 @@ export class SearchRepository {
     return res.map((row) => row.city!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
-  async getCameraMakes(userIds: string[], { model, lensModel }: GetCameraMakesOptions): Promise<string[]> {
-    const res = await this.getExifField('make', userIds)
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
+  async getCameraMakes(
+    userIds: string[],
+    sharedLibraryIds: string[],
+    { model, lensModel }: GetCameraMakesOptions,
+  ): Promise<string[]> {
+    const res = await this.getExifField('make', userIds, sharedLibraryIds)
       .$if(!!model, (qb) => qb.where('model', '=', model!))
       .$if(!!lensModel, (qb) => qb.where('lensModel', '=', lensModel!))
       .execute();
@@ -472,9 +504,13 @@ export class SearchRepository {
     return res.map((row) => row.make!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
-  async getCameraModels(userIds: string[], { make, lensModel }: GetCameraModelsOptions): Promise<string[]> {
-    const res = await this.getExifField('model', userIds)
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], DummyValue.STRING, DummyValue.STRING] })
+  async getCameraModels(
+    userIds: string[],
+    sharedLibraryIds: string[],
+    { make, lensModel }: GetCameraModelsOptions,
+  ): Promise<string[]> {
+    const res = await this.getExifField('model', userIds, sharedLibraryIds)
       .$if(!!make, (qb) => qb.where('make', '=', make!))
       .$if(!!lensModel, (qb) => qb.where('lensModel', '=', lensModel!))
       .execute();
@@ -482,9 +518,13 @@ export class SearchRepository {
     return res.map((row) => row.model!);
   }
 
-  @GenerateSql({ params: [[DummyValue.UUID], DummyValue.STRING] })
-  async getCameraLensModels(userIds: string[], { make, model }: GetCameraLensModelsOptions): Promise<string[]> {
-    const res = await this.getExifField('lensModel', userIds)
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], DummyValue.STRING] })
+  async getCameraLensModels(
+    userIds: string[],
+    sharedLibraryIds: string[],
+    { make, model }: GetCameraLensModelsOptions,
+  ): Promise<string[]> {
+    const res = await this.getExifField('lensModel', userIds, sharedLibraryIds)
       .$if(!!make, (qb) => qb.where('make', '=', make!))
       .$if(!!model, (qb) => qb.where('model', '=', model!))
       .execute();
@@ -492,13 +532,23 @@ export class SearchRepository {
     return res.map((row) => row.lensModel!);
   }
 
-  private getExifField(field: 'city' | 'state' | 'country' | 'make' | 'model' | 'lensModel', userIds: string[]) {
+  // Phase 5 (§3.4): suggestions thread the same OR-arm so filter dropdowns stay consistent with what
+  // shared-arm-widened results actually contain. Redundant-but-verbatim visibility/deletedAt clamp
+  // inside the shared arm, same as every other surface (§0.2).
+  private getExifField(
+    field: 'city' | 'state' | 'country' | 'make' | 'model' | 'lensModel',
+    userIds: string[],
+    sharedLibraryIds: string[] = [],
+  ) {
     return this.db
       .selectFrom('asset_exif')
       .select(field)
       .distinctOn(field)
       .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
-      .where('ownerId', '=', anyUuid(userIds))
+      .where((eb) => {
+        const ownerArm = eb('asset.ownerId', '=', anyUuid(userIds));
+        return sharedLibraryIds.length > 0 ? eb.or([ownerArm, withSharedLibraryAssets(sharedLibraryIds)(eb)]) : ownerArm;
+      })
       .where('visibility', '=', AssetVisibility.Timeline)
       .where('deletedAt', 'is', null)
       .where(field, 'is not', null)

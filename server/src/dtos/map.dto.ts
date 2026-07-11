@@ -25,6 +25,9 @@ const MapMarkerSchema = z
     fileCreatedBefore: isoDatetimeToDate.optional().describe('Filter assets created before this date'),
     withPartners: stringToBool.optional().describe('Include partner assets'),
     withSharedAlbums: stringToBool.optional().describe('Include shared album assets'),
+    withSharedLibraries: stringToBool
+      .optional()
+      .describe('Include assets from external libraries shared with you where you have opted into the main timeline'),
   })
   .meta({ id: 'MapMarkerDto' });
 

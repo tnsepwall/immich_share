@@ -303,5 +303,75 @@ describe(TimelineService.name, () => {
         ).rejects.toBeInstanceOf(BadRequestException);
       });
     });
+
+    describe('withSharedLibraries (Phase 5)', () => {
+      it('should resolve shared library ids only on the main path', async () => {
+        const json = `[{ id: ['asset-id'] }]`;
+        mocks.asset.getTimeBucket.mockResolvedValue({ assets: json });
+        mocks.library.getInTimelineSharedLibraryIds.mockResolvedValue(['shared-library-id']);
+
+        await expect(
+          sut.getTimeBucket(authStub.admin, {
+            timeBucket: 'bucket',
+            userId: authStub.admin.user.id,
+            visibility: AssetVisibility.Timeline,
+            withSharedLibraries: true,
+          }),
+        ).resolves.toEqual(json);
+
+        expect(mocks.library.getInTimelineSharedLibraryIds).toHaveBeenCalledWith(authStub.admin.user.id);
+        expect(mocks.asset.getTimeBucket).toHaveBeenCalledWith(
+          'bucket',
+          expect.objectContaining({
+            userIds: [authStub.admin.user.id],
+            sharedLibraryIds: ['shared-library-id'],
+          }),
+          authStub.admin,
+        );
+      });
+
+      it('should not resolve shared library ids on the dedicated libraryId route', async () => {
+        const json = `[{ id: ['asset-id'] }]`;
+        mocks.asset.getTimeBucket.mockResolvedValue({ assets: json });
+        mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
+        mocks.library.get.mockResolvedValue({ id: 'library-id', ownerId: authStub.user1.user.id } as any);
+
+        await sut.getTimeBucket(authStub.user1, {
+          timeBucket: 'bucket',
+          libraryId: 'library-id',
+          visibility: AssetVisibility.Timeline,
+          withSharedLibraries: true,
+        });
+
+        expect(mocks.library.getInTimelineSharedLibraryIds).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        { isTrashed: true },
+        { isFavorite: true },
+        { isFavorite: false },
+        { visibility: AssetVisibility.Archive },
+      ])('should reject withSharedLibraries combined with a restricted filter: %j', async (filter) => {
+        await expect(
+          sut.getTimeBucket(authStub.admin, {
+            timeBucket: 'bucket',
+            userId: authStub.admin.user.id,
+            withSharedLibraries: true,
+            ...filter,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('should reject withSharedLibraries combined with Locked visibility', async () => {
+        await expect(
+          sut.getTimeBucket(authStub.adminWithElevatedPermission, {
+            timeBucket: 'bucket',
+            userId: authStub.adminWithElevatedPermission.user.id,
+            withSharedLibraries: true,
+            visibility: AssetVisibility.Locked,
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
   });
 });

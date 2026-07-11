@@ -52,6 +52,7 @@ import {
   withAlbumAssetProvenance,
   withLibrary,
   withOwner,
+  withSharedLibraryAssets,
   withSmartSearch,
   withTagId,
   withTags,
@@ -92,6 +93,15 @@ interface AssetBuilderOptions {
   tagId?: string;
   personId?: string;
   userIds?: string[];
+  /**
+   * Phase 5: opted-in shared-library ids (library_user.inTimeline = true) whose Timeline-visibility,
+   * non-deleted assets should ALSO be included via a separate OR-branch on asset.libraryId - never by
+   * adding the library owner's id to `userIds` (that would leak the owner's uploads and every other
+   * library they have). See the shared-arm predicate applied in getTimeBuckets/getTimeBucket below;
+   * the visibility/deletedAt clamp is pinned inside that branch and does not inherit
+   * withDefaultVisibility. Only meaningful alongside `userIds` on the main-timeline path.
+   */
+  sharedLibraryIds?: string[];
   withStacked?: boolean;
   exifInfo?: boolean;
   status?: AssetStatus;
@@ -990,9 +1000,27 @@ export class AssetRepository {
               .leftJoin('stack', (join) =>
                 join.onRef('stack.id', '=', 'asset.stackId').onRef('stack.primaryAssetId', '=', 'asset.id'),
               )
-              .where((eb) => eb.or([eb('asset.stackId', 'is', null), eb(eb.table('stack'), 'is not', null)])),
+              .where((eb) =>
+                eb.or([
+                  eb('asset.stackId', 'is', null),
+                  eb(eb.table('stack'), 'is not', null),
+                  // Stacks are owner-only in v1 (plan §2.4/§0.2) - never collapse a shared-library
+                  // asset away just because it happens to be a non-primary stack member in the
+                  // OWNER's account; it must keep appearing to the sharee as an individual asset.
+                  ...(options.sharedLibraryIds && options.sharedLibraryIds.length > 0
+                    ? [eb('asset.libraryId', 'in', options.sharedLibraryIds)]
+                    : []),
+                ]),
+              ),
           )
-          .$if(!!options.userIds, (qb) => qb.where('asset.ownerId', '=', anyUuid(options.userIds!)))
+          .$if(!!options.userIds, (qb) =>
+            qb.where((eb) => {
+              const ownerArm = eb('asset.ownerId', '=', anyUuid(options.userIds!));
+              return options.sharedLibraryIds && options.sharedLibraryIds.length > 0
+                ? eb.or([ownerArm, withSharedLibraryAssets(options.sharedLibraryIds)(eb)])
+                : ownerArm;
+            }),
+          )
           .$if(!!options.libraryId, (qb) => qb.where('asset.libraryId', '=', options.libraryId!))
           .$if(options.isFavorite !== undefined, (qb) => qb.where('asset.isFavorite', '=', options.isFavorite!))
           .$if(!!options.assetType, (qb) => qb.where('asset.type', '=', options.assetType!))
@@ -1026,7 +1054,13 @@ export class AssetRepository {
             sql`asset."isFavorite" and asset."ownerId" = ${auth.user.id}`.as('isFavorite'),
             sql`asset.type = 'IMAGE'`.as('isImage'),
             sql`asset."deletedAt" is not null`.as('isTrashed'),
-            'asset.livePhotoVideoId',
+            // Redacted for non-owner (shared-arm) rows, same shape as isFavorite above: a shared-library
+            // asset's motion-part id must not leak to a sharee unless the motion asset itself passes the
+            // same access check, which this endpoint doesn't verify - so it's simplest and safest to
+            // just null it whenever the row isn't the caller's own asset (see plan §2.5).
+            sql`case when asset."ownerId" = ${auth.user.id} then asset."livePhotoVideoId" else null end`.as(
+              'livePhotoVideoId',
+            ),
             sql`extract(epoch from (asset."localDateTime" AT TIME ZONE 'UTC' - asset."fileCreatedAt" at time zone 'UTC'))::real / 3600`.as(
               'localOffsetHours',
             ),
@@ -1080,20 +1114,35 @@ export class AssetRepository {
             ),
           )
           .$if(!!options.personId, (qb) => hasPeople(qb, [options.personId!]))
-          .$if(!!options.userIds, (qb) => qb.where('asset.ownerId', '=', anyUuid(options.userIds!)))
+          .$if(!!options.userIds, (qb) =>
+            qb.where((eb) => {
+              const ownerArm = eb('asset.ownerId', '=', anyUuid(options.userIds!));
+              return options.sharedLibraryIds && options.sharedLibraryIds.length > 0
+                ? eb.or([ownerArm, withSharedLibraryAssets(options.sharedLibraryIds)(eb)])
+                : ownerArm;
+            }),
+          )
           .$if(!!options.libraryId, (qb) => qb.where('asset.libraryId', '=', options.libraryId!))
           .$if(options.isFavorite !== undefined, (qb) => qb.where('asset.isFavorite', '=', options.isFavorite!))
           .$if(!!options.withStacked, (qb) =>
             qb
               .where((eb) =>
-                eb.not(
-                  eb.exists(
-                    eb
-                      .selectFrom('stack')
-                      .whereRef('stack.id', '=', 'asset.stackId')
-                      .whereRef('stack.primaryAssetId', '!=', 'asset.id'),
+                eb.or([
+                  eb.not(
+                    eb.exists(
+                      eb
+                        .selectFrom('stack')
+                        .whereRef('stack.id', '=', 'asset.stackId')
+                        .whereRef('stack.primaryAssetId', '!=', 'asset.id'),
+                    ),
                   ),
-                ),
+                  // Same bypass as getTimeBuckets above - stacks are owner-only in v1 (§2.4/§0.2); a
+                  // shared-library asset must never be collapsed away just because it's a non-primary
+                  // stack member in the owner's account.
+                  ...(options.sharedLibraryIds && options.sharedLibraryIds.length > 0
+                    ? [eb('asset.libraryId', 'in', options.sharedLibraryIds)]
+                    : []),
+                ]),
               )
               .leftJoinLateral(
                 (eb) =>
@@ -1103,6 +1152,12 @@ export class AssetRepository {
                     .whereRef('stacked.stackId', '=', 'asset.stackId')
                     .where('stacked.deletedAt', 'is', null)
                     .where('stacked.visibility', '=', AssetVisibility.Timeline)
+                    // Never surface a stack tuple for a shared-library row (§2.4) - regardless of
+                    // whether it's the stack's actual primary, a sharee must never see stack grouping
+                    // info at all, since stacks are owner-only in v1.
+                    .$if(!!options.sharedLibraryIds && options.sharedLibraryIds.length > 0, (qb) =>
+                      qb.where('asset.libraryId', 'not in', options.sharedLibraryIds!),
+                    )
                     .groupBy('stacked.stackId')
                     .as('stacked_assets'),
                 (join) => join.onTrue(),
@@ -1166,8 +1221,15 @@ export class AssetRepository {
     return query.executeTakeFirstOrThrow();
   }
 
-  @GenerateSql({ params: [DummyValue.UUID, { minAssetsPerField: 5, maxFields: 12 }] })
-  async getAssetIdByCity(ownerId: string, { minAssetsPerField, maxFields }: AssetExploreFieldOptions) {
+  // Phase 5 (§3.5): widened from a single ownerId to (userIds, sharedLibraryIds) with the OR-arm -
+  // deliberately kept partner-free (as today; the caller passes just [auth.user.id], never partner
+  // ids, so adding partners here stays out of scope).
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], { minAssetsPerField: 5, maxFields: 12 }] })
+  async getAssetIdByCity(
+    userIds: string[],
+    sharedLibraryIds: string[],
+    { minAssetsPerField, maxFields }: AssetExploreFieldOptions,
+  ) {
     const items = await this.db
       .with('cities', (qb) =>
         qb
@@ -1183,7 +1245,12 @@ export class AssetRepository {
       .distinctOn('asset_exif.city')
       .select(['assetId as data', 'asset_exif.city as value'])
       .$narrowType<{ value: NotNull }>()
-      .where('ownerId', '=', asUuid(ownerId))
+      .where((eb) => {
+        const ownerArm = eb('asset.ownerId', '=', anyUuid(userIds));
+        return sharedLibraryIds.length > 0
+          ? eb.or([ownerArm, withSharedLibraryAssets(sharedLibraryIds)(eb)])
+          : ownerArm;
+      })
       .where('visibility', '=', AssetVisibility.Timeline)
       .where('type', '=', AssetType.Image)
       .where('deletedAt', 'is', null)
@@ -1193,12 +1260,17 @@ export class AssetRepository {
     return { fieldName: 'exifInfo.city', items };
   }
 
-  @GenerateSql({ params: [DummyValue.UUID, 12] })
-  async getRecentlyCreatedAssetIds(ownerId: string, maxAssets: number) {
+  @GenerateSql({ params: [[DummyValue.UUID], [DummyValue.UUID], 12] })
+  async getRecentlyCreatedAssetIds(userIds: string[], sharedLibraryIds: string[], maxAssets: number) {
     const items = await this.db
       .selectFrom('asset')
       .select(['id as data', 'createdAt as value'])
-      .where('ownerId', '=', asUuid(ownerId))
+      .where((eb) => {
+        const ownerArm = eb('asset.ownerId', '=', anyUuid(userIds));
+        return sharedLibraryIds.length > 0
+          ? eb.or([ownerArm, withSharedLibraryAssets(sharedLibraryIds)(eb)])
+          : ownerArm;
+      })
       .where('asset.visibility', '=', AssetVisibility.Timeline)
       .where('type', '=', AssetType.Image)
       .where('deletedAt', 'is', null)
@@ -1430,7 +1502,7 @@ export class AssetRepository {
     return this.db
       .selectFrom('asset')
       .innerJoin('asset_exif', (join) => join.onRef('asset_exif.assetId', '=', 'asset.id'))
-      .select(['asset_exif.exifImageHeight', 'asset_exif.exifImageWidth', 'asset_exif.orientation'])
+      .select(['asset.ownerId', 'asset.libraryId', 'asset_exif.exifImageHeight', 'asset_exif.exifImageWidth', 'asset_exif.orientation'])
       .select(withEdits)
       .where('asset.id', '=', id)
       .executeTakeFirstOrThrow();

@@ -1,14 +1,15 @@
 import { BadRequestException } from '@nestjs/common';
 import { Kysely } from 'kysely';
-import { AssetVisibility, SharedLinkType } from 'src/enum';
+import { AssetVisibility, LibraryUserRole, SharedLinkType } from 'src/enum';
 import { AccessRepository } from 'src/repositories/access.repository';
 import { AssetRepository } from 'src/repositories/asset.repository';
+import { LibraryRepository } from 'src/repositories/library.repository';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PartnerRepository } from 'src/repositories/partner.repository';
 import { SharedLinkRepository } from 'src/repositories/shared-link.repository';
 import { DB } from 'src/schema';
 import { TimelineService } from 'src/services/timeline.service';
-import { newMediumService } from 'test/medium.factory';
+import { MediumTestContext, newMediumService } from 'test/medium.factory';
 import { factory } from 'test/small.factory';
 import { getKyselyDB } from 'test/utils';
 
@@ -17,9 +18,45 @@ let defaultDatabase: Kysely<DB>;
 const setup = (db?: Kysely<DB>) => {
   return newMediumService(TimelineService, {
     database: db || defaultDatabase,
-    real: [AssetRepository, AccessRepository, PartnerRepository],
+    real: [AssetRepository, AccessRepository, PartnerRepository, LibraryRepository],
     mock: [LoggingRepository],
   });
+};
+
+const newLibrary = async (ctx: MediumTestContext, dto: { ownerId: string }) => {
+  const library = {
+    id: factory.uuid(),
+    name: 'Library',
+    ownerId: dto.ownerId,
+    importPaths: [],
+    exclusionPatterns: [],
+  };
+  await ctx.database.insertInto('library').values(library).execute();
+  return { library };
+};
+
+const newLibraryUser = async (
+  ctx: MediumTestContext,
+  dto: { libraryId: string; userId: string; role: LibraryUserRole; inTimeline?: boolean },
+) => {
+  await ctx.database
+    .insertInto('library_user')
+    .values({ inTimeline: false, ...dto })
+    .execute();
+  return { libraryUser: dto };
+};
+
+const setupShare = async (ctx: MediumTestContext, opts: { inTimeline: boolean }) => {
+  const { user: owner } = await ctx.newUser();
+  const { user: sharee } = await ctx.newUser();
+  const { library } = await newLibrary(ctx, { ownerId: owner.id });
+  await newLibraryUser(ctx, {
+    libraryId: library.id,
+    userId: sharee.id,
+    role: LibraryUserRole.Viewer,
+    inTimeline: opts.inTimeline,
+  });
+  return { owner, sharee, library };
 };
 
 beforeAll(async () => {
@@ -51,13 +88,13 @@ describe(TimelineService.name, () => {
       const response1 = sut.getTimeBuckets(auth, { withPartners: true, visibility: AssetVisibility.Archive });
       await expect(response1).rejects.toBeInstanceOf(BadRequestException);
       await expect(response1).rejects.toThrow(
-        'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+        'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
       );
 
       const response2 = sut.getTimeBuckets(auth, { withPartners: true });
       await expect(response2).rejects.toBeInstanceOf(BadRequestException);
       await expect(response2).rejects.toThrow(
-        'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+        'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
       );
     });
 
@@ -67,13 +104,13 @@ describe(TimelineService.name, () => {
       const response1 = sut.getTimeBuckets(auth, { withPartners: true, isFavorite: false });
       await expect(response1).rejects.toBeInstanceOf(BadRequestException);
       await expect(response1).rejects.toThrow(
-        'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+        'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
       );
 
       const response2 = sut.getTimeBuckets(auth, { withPartners: true, isFavorite: true });
       await expect(response2).rejects.toBeInstanceOf(BadRequestException);
       await expect(response2).rejects.toThrow(
-        'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+        'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
       );
     });
 
@@ -83,7 +120,7 @@ describe(TimelineService.name, () => {
       const response = sut.getTimeBuckets(auth, { withPartners: true, isTrashed: true });
       await expect(response).rejects.toBeInstanceOf(BadRequestException);
       await expect(response).rejects.toThrow(
-        'withPartners is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
+        'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
       );
     });
 
@@ -235,5 +272,184 @@ describe(TimelineService.name, () => {
     const rawResponse = await sut.getTimeBucket(auth, { albumId: album.id, timeBucket: '1970-02-01', isTrashed: true });
     const response = JSON.parse(rawResponse);
     expect(response).not.toEqual(expect.objectContaining({ city: expect.any(Array), country: expect.any(Array) }));
+  });
+
+  describe('withSharedLibraries (Phase 5, real Postgres)', () => {
+    it('should include a shared-library asset in the main timeline only when inTimeline=true', async () => {
+      const { sut, ctx } = setup();
+      const { sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { asset } = await ctx.newAsset({
+        ownerId: library.ownerId,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id).toEqual([asset.id]);
+      // The owner's identity must never leak into the sharee's own-favorite computation.
+      expect(response.ownerId).toEqual([library.ownerId]);
+    });
+
+    it('should exclude a shared-library asset from the main timeline when inTimeline=false', async () => {
+      const { sut, ctx } = setup();
+      const { sharee, library } = await setupShare(ctx, { inTimeline: false });
+      const { asset } = await ctx.newAsset({
+        ownerId: library.ownerId,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id).toEqual([]);
+    });
+
+    it('should never include the owner archived/trashed/other-library assets via the shared arm', async () => {
+      const { sut, ctx } = setup();
+      const { owner, sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { library: otherLibrary } = await newLibrary(ctx, { ownerId: owner.id });
+
+      const { asset: archived } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Archive,
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: trashed } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        deletedAt: new Date(),
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: otherLibraryAsset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: otherLibrary.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: ownerPrivateAsset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: null,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      for (const asset of [archived, trashed, otherLibraryAsset, ownerPrivateAsset]) {
+        await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+      }
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id).toEqual([]);
+    });
+
+    it('should keep bucket counts (getTimeBuckets) and bucket assets (getTimeBucket) predicate-identical', async () => {
+      const { sut, ctx } = setup();
+      const { sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { asset } = await ctx.newAsset({
+        ownerId: library.ownerId,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: asset.id, make: 'Canon' });
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const buckets = await sut.getTimeBuckets(auth, {
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const rawBucket = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const bucket = JSON.parse(rawBucket);
+
+      expect(buckets).toEqual([{ count: 1, timeBucket: '1970-02-01' }]);
+      expect(bucket.id).toEqual([asset.id]);
+    });
+
+    it('should never surface stack info for a shared-library asset', async () => {
+      const { sut, ctx } = setup();
+      const { owner, sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { asset: primary } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: secondary } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: primary.id, make: 'Canon' });
+      await ctx.newExif({ assetId: secondary.id, make: 'Canon' });
+      await ctx.newStack({ ownerId: owner.id }, [primary.id, secondary.id]);
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+        withStacked: true,
+      });
+      const response = JSON.parse(rawResponse);
+      // Both members appear individually (never collapsed) and neither carries a stack tuple - the
+      // `stack` array is present (withStacked=true always selects it) but every entry is null.
+      expect(response.id.toSorted()).toEqual([primary.id, secondary.id].toSorted());
+      expect(response.stack).toEqual([null, null]);
+    });
+
+    it('should redact livePhotoVideoId for a shared-library asset', async () => {
+      const { sut, ctx } = setup();
+      const { owner, sharee, library } = await setupShare(ctx, { inTimeline: true });
+      const { asset: motion } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Hidden,
+        localDateTime: new Date('1970-02-12'),
+      });
+      const { asset: still } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+        livePhotoVideoId: motion.id,
+        localDateTime: new Date('1970-02-12'),
+      });
+      await ctx.newExif({ assetId: still.id, make: 'Canon' });
+
+      const auth = factory.auth({ user: { id: sharee.id } });
+      const rawResponse = await sut.getTimeBucket(auth, {
+        timeBucket: '1970-02-01',
+        visibility: AssetVisibility.Timeline,
+        withSharedLibraries: true,
+      });
+      const response = JSON.parse(rawResponse);
+      expect(response.id).toEqual([still.id]);
+      expect(response.livePhotoVideoId).toEqual([null]);
+    });
   });
 });

@@ -5,6 +5,7 @@ import { JOBS_ASSET_PAGINATION_SIZE } from 'src/constants';
 import { AssetFile } from 'src/database';
 import { OnJob } from 'src/decorators';
 import { AssetResponseDto, SanitizedAssetResponseDto, mapAsset } from 'src/dtos/asset-response.dto';
+import { redactPersonForNonOwner } from 'src/dtos/person.dto';
 import {
   AssetBulkDeleteDto,
   AssetBulkUpdateDto,
@@ -91,8 +92,25 @@ export class AssetService extends BaseService {
       delete data.owner;
     }
 
-    if (data.ownerId !== auth.user.id || auth.sharedLink) {
+    if (auth.sharedLink) {
       data.people = [];
+    } else if (data.ownerId !== auth.user.id) {
+      // Phase 5 (§5.7): a per-face check against THIS asset's own library (deliberately NOT the
+      // broader "is this person reachable somewhere" test from §5.1 - see mapFaces' doc comment in
+      // person.dto.ts) - the caller already has independent read access to this exact asset, so a
+      // redacted people list is shown instead of an empty one, matching what the dedicated
+      // shared-library route already does via Phase 4's LibraryFacePanel.
+      let isLibraryShared = false;
+      if (asset.libraryId) {
+        const sharedLibraryIds = await this.accessRepository.library.checkSharedAccess(
+          auth.user.id,
+          new Set([asset.libraryId]),
+        );
+        isLibraryShared = sharedLibraryIds.size > 0;
+      }
+      data.people = isLibraryShared
+        ? (data.people ?? []).filter((person) => !person.isHidden).map((person) => redactPersonForNonOwner(person))
+        : [];
     }
 
     return data;

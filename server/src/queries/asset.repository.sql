@@ -2,16 +2,27 @@
 
 -- AssetRepository.upsertExif
 insert into
-  "asset_exif" ("dateTimeOriginal", "lockedProperties")
+  "asset_exif" (
+    "dateTimeOriginal",
+    "lockedProperties",
+    "sidecarWriteProperties"
+  )
 values
-  ($1, $2)
+  ($1, $2, $3)
 on conflict ("assetId") do update
 set
   "dateTimeOriginal" = "excluded"."dateTimeOriginal",
   "lockedProperties" = nullif(
     array(
       select distinct
-        unnest("asset_exif"."lockedProperties" || $3)
+        unnest("asset_exif"."lockedProperties" || $4)
+    ),
+    '{}'
+  ),
+  "sidecarWriteProperties" = nullif(
+    array(
+      select distinct
+        unnest("asset_exif"."sidecarWriteProperties" || $5)
     ),
     '{}'
   )
@@ -26,9 +37,16 @@ set
         unnest("asset_exif"."lockedProperties" || $2)
     ),
     '{}'
+  ),
+  "sidecarWriteProperties" = nullif(
+    array(
+      select distinct
+        unnest("asset_exif"."sidecarWriteProperties" || $3)
+    ),
+    '{}'
   )
 where
-  "assetId" in ($3)
+  "assetId" in ($4)
 
 -- AssetRepository.updateDateTimeOriginal
 update "asset_exif"
@@ -41,9 +59,16 @@ set
         unnest("asset_exif"."lockedProperties" || $3)
     ),
     '{}'
+  ),
+  "sidecarWriteProperties" = nullif(
+    array(
+      select distinct
+        unnest("asset_exif"."sidecarWriteProperties" || $4)
+    ),
+    '{}'
   )
 where
-  "assetId" in ($4)
+  "assetId" in ($5)
 returning
   "assetId",
   "dateTimeOriginal",
@@ -62,9 +87,20 @@ set
         not property = any ($1)
     ),
     '{}'
+  ),
+  "sidecarWriteProperties" = nullif(
+    array(
+      select distinct
+        property
+      from
+        unnest("asset_exif"."sidecarWriteProperties") property
+      where
+        not property = any ($2)
+    ),
+    '{}'
   )
 where
-  "assetId" = $2
+  "assetId" = $3
 
 -- AssetRepository.getMetadata
 select
@@ -387,7 +423,10 @@ with
       and asset."ownerId" = $1 as "isFavorite",
       asset.type = 'IMAGE' as "isImage",
       asset."deletedAt" is not null as "isTrashed",
-      "asset"."livePhotoVideoId",
+      case
+        when asset."ownerId" = $2 then asset."livePhotoVideoId"
+        else null
+      end as "livePhotoVideoId",
       extract(
         epoch
         from
@@ -426,14 +465,14 @@ with
         where
           "stacked"."stackId" = "asset"."stackId"
           and "stacked"."deletedAt" is null
-          and "stacked"."visibility" = $2
+          and "stacked"."visibility" = $3
         group by
           "stacked"."stackId"
       ) as "stacked_assets" on true
     where
       "asset"."deletedAt" is null
       and "asset"."visibility" in ('archive', 'timeline')
-      and date_trunc('MONTH', "localDateTime" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' = $3
+      and date_trunc('MONTH', "localDateTime" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' = $4
       and not exists (
         select
         from
@@ -496,12 +535,19 @@ from
   inner join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
   inner join "cities" on "asset_exif"."city" = "cities"."city"
 where
-  "ownerId" = $2::uuid
-  and "visibility" = $3
-  and "type" = $4
+  (
+    "asset"."ownerId" = any ($2::uuid[])
+    or (
+      "asset"."libraryId" in ($3)
+      and "asset"."visibility" = 'timeline'
+      and "asset"."deletedAt" is null
+    )
+  )
+  and "visibility" = $4
+  and "type" = $5
   and "deletedAt" is null
 limit
-  $5
+  $6
 
 -- AssetRepository.getRecentlyCreatedAssetIds
 select
@@ -510,14 +556,21 @@ select
 from
   "asset"
 where
-  "ownerId" = $1::uuid
-  and "asset"."visibility" = $2
-  and "type" = $3
+  (
+    "asset"."ownerId" = any ($1::uuid[])
+    or (
+      "asset"."libraryId" in ($2)
+      and "asset"."visibility" = 'timeline'
+      and "asset"."deletedAt" is null
+    )
+  )
+  and "asset"."visibility" = $3
+  and "type" = $4
   and "deletedAt" is null
 order by
   "value" desc
 limit
-  $4
+  $5
 
 -- AssetRepository.detectOfflineExternalAssets
 update "asset"
@@ -662,6 +715,8 @@ where
 
 -- AssetRepository.getForFaces
 select
+  "asset"."ownerId",
+  "asset"."libraryId",
   "asset_exif"."exifImageHeight",
   "asset_exif"."exifImageWidth",
   "asset_exif"."orientation",

@@ -67,6 +67,197 @@ limit
 offset
   $6
 
+-- PersonRepository.getAllForLibrary
+select
+  "person"."id",
+  "person"."name",
+  (
+    select
+      to_json(obj)
+    from
+      (
+        select
+          "asset_face"."id" as "faceId",
+          "asset_face"."assetId",
+          "asset_face"."boundingBoxX1",
+          "asset_face"."boundingBoxY1",
+          "asset_face"."boundingBoxX2",
+          "asset_face"."boundingBoxY2",
+          "asset_face"."imageWidth",
+          "asset_face"."imageHeight"
+        from
+          "asset_face"
+          inner join "asset" on "asset"."id" = "asset_face"."assetId"
+          and "asset"."libraryId" = $1
+          and "asset"."visibility" = 'timeline'
+          and "asset"."deletedAt" is null
+        where
+          "asset_face"."personId" = "person"."id"
+          and "asset_face"."deletedAt" is null
+          and "asset_face"."isVisible" = $2
+        limit
+          $3
+      ) as obj
+  ) as "thumbnailFace"
+from
+  "person"
+where
+  exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."libraryId" = $4
+      and "asset"."visibility" = 'timeline'
+      and "asset"."deletedAt" is null
+    where
+      "asset_face"."personId" = "person"."id"
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $5
+  )
+order by
+  NULLIF(person.name, '') is null asc,
+  NULLIF(person.name, '') asc nulls last
+limit
+  $6
+offset
+  $7
+
+-- PersonRepository.getOneForLibrary
+select
+  "person"."id",
+  "person"."name",
+  (
+    select
+      to_json(obj)
+    from
+      (
+        select
+          "asset_face"."id" as "faceId",
+          "asset_face"."assetId",
+          "asset_face"."boundingBoxX1",
+          "asset_face"."boundingBoxY1",
+          "asset_face"."boundingBoxX2",
+          "asset_face"."boundingBoxY2",
+          "asset_face"."imageWidth",
+          "asset_face"."imageHeight"
+        from
+          "asset_face"
+          inner join "asset" on "asset"."id" = "asset_face"."assetId"
+          and "asset"."libraryId" = $1
+          and "asset"."visibility" = 'timeline'
+          and "asset"."deletedAt" is null
+        where
+          "asset_face"."personId" = "person"."id"
+          and "asset_face"."deletedAt" is null
+          and "asset_face"."isVisible" = $2
+        limit
+          $3
+      ) as obj
+  ) as "thumbnailFace"
+from
+  "person"
+where
+  "person"."id" = $4
+  and exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."libraryId" = $5
+      and "asset"."visibility" = 'timeline'
+      and "asset"."deletedAt" is null
+    where
+      "asset_face"."personId" = "person"."id"
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $6
+  )
+
+-- PersonRepository.getAllForSharedLibraries
+select
+  "person".*
+from
+  "person"
+  inner join "asset_face" on "asset_face"."personId" = "person"."id"
+  inner join "asset" on "asset_face"."assetId" = "asset"."id"
+  and "asset"."libraryId" in ($1)
+  and "asset"."visibility" = 'timeline'
+  and "asset"."deletedAt" is null
+where
+  "person"."isHidden" = $2
+  and "asset_face"."deletedAt" is null
+  and "asset_face"."isVisible" = $3
+group by
+  "person"."id"
+having
+  (
+    "person"."name" != $4
+    or count("asset_face"."assetId") >= $5
+  )
+order by
+  NULLIF(person.name, '') is null asc,
+  NULLIF(person.name, '') asc nulls last,
+  "person"."createdAt"
+limit
+  $6
+offset
+  $7
+
+-- PersonRepository.getByNameWithSharedLibraries
+with
+  "similarity_threshold" as (
+    select
+      set_config('pg_trgm.word_similarity_threshold', '0.5', true) as "thresh"
+  )
+select
+  "person".*
+from
+  "similarity_threshold",
+  "person"
+where
+  f_unaccent ("person"."name") %> f_unaccent ($1)
+  and (
+    "person"."ownerId" = $2
+    or (
+      "person"."isHidden" = $3
+      and exists (
+        select
+        from
+          "asset_face"
+          inner join "asset" on "asset"."id" = "asset_face"."assetId"
+          and "asset"."deletedAt" is null
+        where
+          "asset_face"."personId" = "person"."id"
+          and "asset_face"."deletedAt" is null
+          and "asset_face"."isVisible" = $4
+          and "asset"."libraryId" in ($5)
+          and "asset"."visibility" = 'timeline'
+      )
+    )
+  )
+order by
+  f_unaccent ("person"."name") <->>> f_unaccent ($6)
+limit
+  $7
+
+-- PersonRepository.isFeatureFaceInSharedLibrary
+select
+  "asset_face"."id"
+from
+  "asset_face"
+  inner join "asset" on "asset"."id" = "asset_face"."assetId"
+  and "asset"."deletedAt" is null
+  inner join "library" on "library"."id" = "asset"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+  inner join "library_user" on "library_user"."libraryId" = "library"."id"
+  and "library_user"."userId" = $1
+  and "library_user"."inTimeline" = $2
+where
+  "asset_face"."id" = $3
+  and "asset"."visibility" = 'timeline'
+
 -- PersonRepository.getAllWithoutFaces
 select
   "person".*
@@ -103,6 +294,36 @@ where
   "asset_face"."assetId" = $1
   and "asset_face"."deletedAt" is null
   and "asset_face"."isVisible" = $2
+order by
+  "asset_face"."boundingBoxX1" asc
+
+-- PersonRepository.getFacesForLibraryAsset
+select
+  "asset_face".*,
+  (
+    select
+      to_json(obj)
+    from
+      (
+        select
+          "person"."id",
+          "person"."name"
+        from
+          "person"
+        where
+          "person"."id" = "asset_face"."personId"
+      ) as obj
+  ) as "person"
+from
+  "asset_face"
+  inner join "asset" on "asset"."id" = "asset_face"."assetId"
+  and "asset"."libraryId" = $1
+  and "asset"."visibility" = 'timeline'
+  and "asset"."deletedAt" is null
+where
+  "asset_face"."assetId" = $2
+  and "asset_face"."deletedAt" is null
+  and "asset_face"."isVisible" = $3
 order by
   "asset_face"."boundingBoxX1" asc
 

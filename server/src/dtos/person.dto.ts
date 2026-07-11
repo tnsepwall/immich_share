@@ -184,6 +184,26 @@ export function mapPerson(person: MaybeDehydrated<Person>): PersonResponseDto {
   };
 }
 
+/**
+ * Phase 5 (§5.3): redacted projection for a person reached by someone who isn't its owner (via a
+ * shared library) - strips birthDate, isHidden, isFavorite, color, and the internal thumbnailPath
+ * filesystem string, mirroring how Phase 4 returned only id/name/thumbnailFace for library-scoped
+ * persons. Callers must independently exclude isHidden persons entirely (§5.3/§5.5) - this function
+ * only redacts fields, it does not decide whether the person should be included at all.
+ */
+export function redactPersonForNonOwner(person: PersonResponseDto): PersonResponseDto {
+  return {
+    id: person.id,
+    name: person.name,
+    birthDate: null,
+    thumbnailPath: '',
+    isHidden: false,
+    isFavorite: false,
+    color: undefined,
+    updatedAt: person.updatedAt,
+  };
+}
+
 function mapFacesWithoutPerson(
   face: MaybeDehydrated<Selectable<AssetFaceTable>>,
   edits?: AssetEditActionItem[],
@@ -207,14 +227,29 @@ function mapFacesWithoutPerson(
   };
 }
 
+/**
+ * `assetLibraryShared` (§5.7): true when the ASSET this face belongs to is itself in a library
+ * actively shared with the caller (any role - NOT the broader "is this person reachable somewhere"
+ * check from §5.1, and NOT gated by inTimeline, since the caller already has independent read access
+ * to this exact asset - see asset.service.ts#getAssetInfo for how it's computed). When true, a
+ * non-owned person is included in redacted form rather than nulled out entirely; a hidden person is
+ * still always excluded regardless.
+ */
 export function mapFaces(
   face: AssetFace,
   auth: AuthDto,
   edits?: AssetEditActionItem[],
   assetDimensions?: ImageDimensions,
+  assetLibraryShared = false,
 ): AssetFaceResponseDto {
+  const isOwnPerson = face.person?.ownerId === auth.user.id;
+  const isSharedLibraryPerson = assetLibraryShared && !!face.person && !face.person.isHidden;
   return {
     ...mapFacesWithoutPerson(face, edits, assetDimensions),
-    person: face.person?.ownerId === auth.user.id ? mapPerson(face.person) : null,
+    person: isOwnPerson
+      ? mapPerson(face.person!)
+      : isSharedLibraryPerson
+        ? redactPersonForNonOwner(mapPerson(face.person!))
+        : null,
   };
 }
