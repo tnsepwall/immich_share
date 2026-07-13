@@ -26,12 +26,14 @@ const shareRow = (row: {
   user: any;
   role: LibraryUserRole;
   inTimeline?: boolean;
+  timelineEnabledId?: string | null;
 }) => ({
   createId: newUuid(),
   createdAt: newDate(),
   updateId: newUuid(),
   updatedAt: newDate(),
   inTimeline: false,
+  timelineEnabledId: null,
   ...row,
 });
 
@@ -47,14 +49,21 @@ describe(LibraryService.name, () => {
     mocks.config.getWorker.mockReturnValue(ImmichWorker.Microservices);
   });
 
+  // Phase 6: automock() only replaces top-level function properties (test/utils.ts) -
+  // SyncRepository.sharedLibrary is a nested plain object (SharedLibrarySync), never auto-mocked, so
+  // any test exercising a reset-decision path must stub it explicitly first.
+  const stubSharedLibrarySync = (flaggedShares: { ownerId: string }[] = []) => {
+    (mocks.sync as any).sharedLibrary = { getFlaggedShares: vitest.fn().mockResolvedValue(flaggedShares) };
+  };
+
   it('should work', () => {
     expect(sut).toBeDefined();
   });
 
   describe('onConfigInit', () => {
     it('should init cron job and handle config changes', async () => {
-      mocks.cron.create.mockResolvedValue();
-      mocks.cron.update.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
+      mocks.cron.update.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: defaults });
 
@@ -89,7 +98,7 @@ describe(LibraryService.name, () => {
       mocks.library.get.mockImplementation((id) =>
         Promise.resolve([library1, library2].find((library) => library.id === id)),
       );
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
 
@@ -99,7 +108,7 @@ describe(LibraryService.name, () => {
     });
 
     it('should not initialize watcher when watching is disabled', async () => {
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchDisabled as SystemConfig });
 
@@ -126,7 +135,7 @@ describe(LibraryService.name, () => {
   describe('onConfigUpdateEvent', () => {
     beforeEach(async () => {
       mocks.database.tryLock.mockResolvedValue(true);
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: defaults });
     });
@@ -140,8 +149,8 @@ describe(LibraryService.name, () => {
 
     it('should update cron job and enable watching', async () => {
       mocks.library.getAll.mockResolvedValue([]);
-      mocks.cron.create.mockResolvedValue();
-      mocks.cron.update.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
+      mocks.cron.update.mockResolvedValue(void 0);
 
       await sut.onConfigUpdate({
         newConfig: systemConfigStub.libraryScanAndWatch as SystemConfig,
@@ -157,8 +166,8 @@ describe(LibraryService.name, () => {
 
     it('should update cron job and disable watching', async () => {
       mocks.library.getAll.mockResolvedValue([]);
-      mocks.cron.create.mockResolvedValue();
-      mocks.cron.update.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
+      mocks.cron.update.mockResolvedValue(void 0);
 
       await sut.onConfigUpdate({
         newConfig: systemConfigStub.libraryScanAndWatch as SystemConfig,
@@ -626,6 +635,7 @@ describe(LibraryService.name, () => {
 
       mocks.asset.getByLibraryIdAndOriginalPath.mockResolvedValue(AssetFactory.create());
       mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
 
       await sut.delete(library.id);
 
@@ -638,6 +648,7 @@ describe(LibraryService.name, () => {
 
       mocks.asset.getByLibraryIdAndOriginalPath.mockResolvedValue(AssetFactory.create());
       mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
 
       await sut.delete(library.id);
 
@@ -655,15 +666,68 @@ describe(LibraryService.name, () => {
       mocks.asset.getByLibraryIdAndOriginalPath.mockResolvedValue(AssetFactory.create());
       mocks.library.get.mockResolvedValue(library);
       mocks.library.getAll.mockResolvedValue([library]);
+      mocks.library.getSharedUsers.mockResolvedValue([]);
 
       const mockClose = vitest.fn();
       mocks.storage.watch.mockImplementation(makeMockWatcher({ close: mockClose }));
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
       await sut.delete(library.id);
 
       expect(mockClose).toHaveBeenCalled();
+    });
+
+    it('should force a session reset for a flagged sharee when another flagged library from the same owner remains', async () => {
+      const library = factory.library();
+      const target = UserFactory.create();
+
+      mocks.asset.getByLibraryIdAndOriginalPath.mockResolvedValue(AssetFactory.create());
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+          inTimeline: true,
+        }),
+      ]);
+      (mocks.sync as any).sharedLibrary = {
+        getFlaggedShares: vitest.fn().mockResolvedValue([{ ownerId: library.ownerId }]),
+      };
+      mocks.partner.get.mockResolvedValue(void 0);
+      mocks.session.markPendingSyncReset.mockResolvedValue(void 0);
+
+      await sut.delete(library.id);
+
+      expect(mocks.library.softDelete).toHaveBeenCalledWith(library.id);
+      expect(mocks.session.markPendingSyncReset).toHaveBeenCalledWith(target.id);
+    });
+
+    it("should not force a reset when the soft-deleted library was the sharee's last flagged share", async () => {
+      const library = factory.library();
+      const target = UserFactory.create();
+
+      mocks.asset.getByLibraryIdAndOriginalPath.mockResolvedValue(AssetFactory.create());
+      mocks.library.get.mockResolvedValue(library);
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+          inTimeline: true,
+        }),
+      ]);
+      (mocks.sync as any).sharedLibrary = { getFlaggedShares: vitest.fn().mockResolvedValue([]) };
+      mocks.partner.get.mockResolvedValue(void 0);
+
+      await sut.delete(library.id);
+
+      expect(mocks.library.softDelete).toHaveBeenCalledWith(library.id);
+      // 'delete' outcome - left to the natural audit-driven PartnerDeleteV1 mechanism, no reset needed.
+      expect(mocks.session.markPendingSyncReset).not.toHaveBeenCalled();
     });
   });
 
@@ -825,7 +889,7 @@ describe(LibraryService.name, () => {
         mocks.library.create.mockResolvedValue(library);
         mocks.library.get.mockResolvedValue(library);
         mocks.library.getAll.mockResolvedValue([]);
-        mocks.cron.create.mockResolvedValue();
+        mocks.cron.create.mockResolvedValue(void 0);
 
         await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
         await sut.create({ ownerId: authStub.admin.user.id, importPaths: library.importPaths });
@@ -914,7 +978,7 @@ describe(LibraryService.name, () => {
   describe('update', () => {
     beforeEach(async () => {
       mocks.library.getAll.mockResolvedValue([]);
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
     });
@@ -961,7 +1025,7 @@ describe(LibraryService.name, () => {
 
     describe('watching disabled', () => {
       beforeEach(async () => {
-        mocks.cron.create.mockResolvedValue();
+        mocks.cron.create.mockResolvedValue(void 0);
 
         await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchDisabled as SystemConfig });
       });
@@ -980,7 +1044,7 @@ describe(LibraryService.name, () => {
     describe('watching enabled', () => {
       beforeEach(async () => {
         mocks.library.getAll.mockResolvedValue([]);
-        mocks.cron.create.mockResolvedValue();
+        mocks.cron.create.mockResolvedValue(void 0);
 
         await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
       });
@@ -1156,7 +1220,7 @@ describe(LibraryService.name, () => {
 
       const mockClose = vitest.fn();
       mocks.storage.watch.mockImplementation(makeMockWatcher({ close: mockClose }));
-      mocks.cron.create.mockResolvedValue();
+      mocks.cron.create.mockResolvedValue(void 0);
 
       await sut.onConfigInit({ newConfig: systemConfigStub.libraryWatchEnabled as SystemConfig });
       await sut.onShutdown();
@@ -1562,6 +1626,119 @@ describe(LibraryService.name, () => {
     });
   });
 
+  describe('updateMyShare', () => {
+    it('should flip inTimeline true->false and not touch sync/partner repos when no other flagged share exists', async () => {
+      const recipient = factory.auth();
+      const owner = UserFactory.create();
+      const library = factory.library({ ownerId: owner.id });
+      stubSharedLibrarySync([]);
+
+      mocks.access.library.checkSelfShareAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getUserShare.mockResolvedValue(
+        shareRow({
+          libraryId: library.id,
+          userId: recipient.user.id,
+          user: getDehydrated(recipient.user),
+          role: LibraryUserRole.Viewer,
+          inTimeline: true,
+        }) as any,
+      );
+      mocks.library.updateMyShare.mockResolvedValue({} as any);
+      mocks.library.getSharedWithUser.mockResolvedValue([
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Viewer, inTimeline: false, assetCount: 0 },
+      ]);
+      mocks.partner.get.mockResolvedValue(void 0);
+
+      await sut.updateMyShare(recipient, library.id, { inTimeline: false });
+
+      expect(mocks.library.updateMyShare).toHaveBeenCalledWith(library.id, recipient.user.id, false);
+      // 'delete' outcome: the natural audit-driven mechanism handles it on the next sync, so no
+      // explicit session reset here.
+      expect(mocks.session.markPendingSyncReset).not.toHaveBeenCalled();
+    });
+
+    it('should force a session reset when another flagged library from the same owner remains', async () => {
+      const recipient = factory.auth();
+      const owner = UserFactory.create();
+      const library = factory.library({ ownerId: owner.id });
+      stubSharedLibrarySync([{ ownerId: owner.id }]);
+
+      mocks.access.library.checkSelfShareAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getUserShare.mockResolvedValue(
+        shareRow({
+          libraryId: library.id,
+          userId: recipient.user.id,
+          user: getDehydrated(recipient.user),
+          role: LibraryUserRole.Viewer,
+          inTimeline: true,
+        }) as any,
+      );
+      mocks.library.updateMyShare.mockResolvedValue({} as any);
+      mocks.library.getSharedWithUser.mockResolvedValue([
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Viewer, inTimeline: false, assetCount: 0 },
+      ]);
+      mocks.partner.get.mockResolvedValue(void 0);
+      mocks.session.markPendingSyncReset.mockResolvedValue(void 0);
+
+      await sut.updateMyShare(recipient, library.id, { inTimeline: false });
+
+      expect(mocks.session.markPendingSyncReset).toHaveBeenCalledWith(recipient.user.id);
+    });
+
+    it('should not even consult the reset decision on a redundant false->false update', async () => {
+      const recipient = factory.auth();
+      const owner = UserFactory.create();
+      const library = factory.library({ ownerId: owner.id });
+      stubSharedLibrarySync([{ ownerId: owner.id }]);
+
+      mocks.access.library.checkSelfShareAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getUserShare.mockResolvedValue(
+        shareRow({
+          libraryId: library.id,
+          userId: recipient.user.id,
+          user: getDehydrated(recipient.user),
+          role: LibraryUserRole.Viewer,
+          inTimeline: false,
+        }) as any,
+      );
+      mocks.library.updateMyShare.mockResolvedValue({} as any);
+      mocks.library.getSharedWithUser.mockResolvedValue([
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Viewer, inTimeline: false, assetCount: 0 },
+      ]);
+
+      await sut.updateMyShare(recipient, library.id, { inTimeline: false });
+
+      expect(mocks.partner.get).not.toHaveBeenCalled();
+      expect(mocks.session.markPendingSyncReset).not.toHaveBeenCalled();
+    });
+
+    it('should not reset on flag ON (only true->false transitions can strand a projection)', async () => {
+      const recipient = factory.auth();
+      const owner = UserFactory.create();
+      const library = factory.library({ ownerId: owner.id });
+
+      mocks.access.library.checkSelfShareAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getUserShare.mockResolvedValue(
+        shareRow({
+          libraryId: library.id,
+          userId: recipient.user.id,
+          user: getDehydrated(recipient.user),
+          role: LibraryUserRole.Viewer,
+          inTimeline: false,
+        }) as any,
+      );
+      mocks.library.updateMyShare.mockResolvedValue({} as any);
+      mocks.library.getSharedWithUser.mockResolvedValue([
+        { ...library, owner: getDehydrated(owner), role: LibraryUserRole.Viewer, inTimeline: true, assetCount: 0 },
+      ]);
+
+      await sut.updateMyShare(recipient, library.id, { inTimeline: true });
+
+      expect(mocks.partner.get).not.toHaveBeenCalled();
+      expect(mocks.session.markPendingSyncReset).not.toHaveBeenCalled();
+    });
+  });
+
   describe('removeUser', () => {
     it('should let the owner remove a shared user', async () => {
       const owner = factory.auth();
@@ -1626,6 +1803,58 @@ describe(LibraryService.name, () => {
 
       await expect(sut.removeUser(owner, library.id, newUuid())).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.library.removeUser).not.toHaveBeenCalled();
+    });
+
+    it('should force a session reset when unsharing a flagged library and another flagged one from the same owner remains', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+          inTimeline: true,
+        }),
+      ]);
+      (mocks.sync as any).sharedLibrary = {
+        getFlaggedShares: vitest.fn().mockResolvedValue([{ ownerId: owner.user.id }]),
+      };
+      mocks.partner.get.mockResolvedValue(void 0);
+      mocks.session.markPendingSyncReset.mockResolvedValue(void 0);
+
+      await sut.removeUser(owner, library.id, target.id);
+
+      expect(mocks.library.removeUser).toHaveBeenCalledWith(library.id, target.id);
+      expect(mocks.session.markPendingSyncReset).toHaveBeenCalledWith(target.id);
+    });
+
+    it('should not consult the reset decision when the removed share was never flagged', async () => {
+      const owner = factory.auth();
+      const library = factory.library({ ownerId: owner.user.id });
+      const target = UserFactory.create();
+
+      mocks.library.get.mockResolvedValue(library);
+      mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set([library.id]));
+      mocks.library.getSharedUsers.mockResolvedValue([
+        shareRow({
+          libraryId: library.id,
+          userId: target.id,
+          user: getDehydrated(target),
+          role: LibraryUserRole.Viewer,
+          inTimeline: false,
+        }),
+      ]);
+
+      await sut.removeUser(owner, library.id, target.id);
+
+      expect(mocks.library.removeUser).toHaveBeenCalledWith(library.id, target.id);
+      expect(mocks.partner.get).not.toHaveBeenCalled();
+      expect(mocks.session.markPendingSyncReset).not.toHaveBeenCalled();
     });
   });
 });

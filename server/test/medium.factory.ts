@@ -12,6 +12,7 @@ import {
   AssetType,
   AssetVisibility,
   ChecksumAlgorithm,
+  LibraryUserRole,
   MemoryType,
   SourceType,
   SyncEntityType,
@@ -66,6 +67,7 @@ import { AssetJobStatusTable } from 'src/schema/tables/asset-job-status.table';
 import { AssetMetadataTable } from 'src/schema/tables/asset-metadata.table';
 import { AssetTable } from 'src/schema/tables/asset.table';
 import { FaceSearchTable } from 'src/schema/tables/face-search.table';
+import { LibraryTable } from 'src/schema/tables/library.table';
 import { MemoryTable } from 'src/schema/tables/memory.table';
 import { PersonTable } from 'src/schema/tables/person.table';
 import { SessionTable } from 'src/schema/tables/session.table';
@@ -242,6 +244,24 @@ export class MediumTestContext<S extends BaseService = BaseService> {
     return { albumUser: { albumId, userId, role }, result };
   }
 
+  async newLibrary(dto: Partial<Insertable<LibraryTable>> & { ownerId: string }) {
+    const library = mediumFactory.libraryInsert(dto);
+    const result = await this.get(LibraryRepository).create(library);
+    return { library: result, result };
+  }
+
+  // Phase 6: uses the real atomic updateMyShare path (not a raw insert) when inTimeline is requested,
+  // so timelineEnabledId is set exactly the way LibraryService.updateMyShare sets it in production -
+  // medium specs asserting backfill behavior need a real, non-null watermark, not a hand-picked one.
+  async newLibraryUser(dto: { libraryId: string; userId: string; role?: LibraryUserRole; inTimeline?: boolean }) {
+    const { libraryId, userId, role = LibraryUserRole.Viewer, inTimeline = false } = dto;
+    await this.get(LibraryRepository).addUsers(libraryId, [{ userId, role }]);
+    const result = inTimeline
+      ? await this.get(LibraryRepository).updateMyShare(libraryId, userId, true)
+      : await this.get(LibraryRepository).getUserShare(libraryId, userId);
+    return { libraryUser: result!, result };
+  }
+
   async softDeleteAsset(assetId: string) {
     await this.database.updateTable('asset').set({ deletedAt: new Date() }).where('id', '=', assetId).execute();
   }
@@ -309,7 +329,9 @@ export class SyncTestContext extends MediumTestContext<SyncService> {
   constructor(database: Kysely<DB>) {
     super(SyncService, {
       database,
-      real: [SyncRepository, SyncCheckpointRepository, SessionRepository],
+      // PartnerRepository is real because the phase-6 PartnerDeleteV1 projection arm consults the
+      // real partner table (resolveSharedLibraryTransition) to decide delete vs suppress.
+      real: [SyncRepository, SyncCheckpointRepository, SessionRepository, PartnerRepository],
       mock: [LoggingRepository],
     });
   }
@@ -599,6 +621,22 @@ const albumInsert = (album: Partial<Insertable<AlbumTable>>) => {
   };
 };
 
+const libraryInsert = (library: Partial<Insertable<LibraryTable>> & { ownerId: string }) => {
+  const id = library.id || newUuid();
+  const defaults: Insertable<LibraryTable> = {
+    name: 'Library',
+    ownerId: library.ownerId,
+    importPaths: [],
+    exclusionPatterns: [],
+  };
+
+  return {
+    ...defaults,
+    ...library,
+    id,
+  };
+};
+
 const faceInsert = (face: Partial<Insertable<FaceSearchTable>> & { faceId: string }) => {
   const defaults = {
     faceId: face.faceId,
@@ -805,6 +843,7 @@ export const mediumFactory = {
   assetJobStatusInsert,
   albumInsert,
   faceInsert,
+  libraryInsert,
   personInsert,
   sessionInsert,
   syncStream,
