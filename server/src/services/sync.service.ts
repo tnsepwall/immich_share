@@ -18,6 +18,7 @@ import { SessionSyncCheckpointTable } from 'src/schema/tables/sync-checkpoint.ta
 import { BaseService } from 'src/services/base.service';
 import { SyncAck } from 'src/types';
 import { hexOrBufferToBase64 } from 'src/utils/bytes';
+import { resolveSharedLibraryTransition } from 'src/utils/shared-library-sync';
 import { fromAck, serialize, SerializeOptions, toAck } from 'src/utils/sync';
 
 type CheckpointMap = Partial<Record<SyncEntityType, SyncAck>>;
@@ -42,6 +43,12 @@ const isEntityBackfillComplete = (createId: string, checkpoint: SyncAck | undefi
 const getStartId = (createId: string, checkpoint: SyncAck | undefined): string | undefined =>
   createId === checkpoint?.updateId ? checkpoint?.extraId : undefined;
 
+// Phase 6: ascending-id comparator for the small (relationship-level) real+pseudo merges in
+// syncPartnersV1 - unlike the asset-level merges, these lists are always small enough to
+// collect-then-sort rather than needing mergeById's lazy k-way merge.
+const compareById = <D>(a: { id: string; data: D }, b: { id: string; data: D }) =>
+  a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+
 const send = <T extends keyof SyncItem, D extends SyncItem[T]>(response: Writable, item: SerializeOptions<T, D>) => {
   response.write(serialize(item));
 };
@@ -49,6 +56,48 @@ const send = <T extends keyof SyncItem, D extends SyncItem[T]>(response: Writabl
 const sendEntityBackfillCompleteAck = (response: Writable, ackType: SyncEntityType, id: string) => {
   send(response, { type: SyncEntityType.SyncAckV1, data: {}, ackType, ids: [id, COMPLETE_ID] });
 };
+
+// Phase 6 (mobile pseudo-partner projection): a real partner and a flagged-library "pseudo partner"
+// share exactly one wire checkpoint per entity type (PartnerDeleteV1, PartnerAssetV2,
+// PartnerAssetDeleteV1, ...) - CheckpointMap above is one SyncAck per SyncEntityType, full stop, the
+// same constraint every other entity type in this file already lives with. Both id spaces (audit-table
+// ids and asset/share `updateId` watermarks) are uuidv7, so they share one monotonic ordering with
+// `nowId`; merging two or three async cursors by ascending id, lazily, keeps every projection query
+// streaming (no eager materialization of potentially-large asset lists) while guaranteeing that
+// whatever id ends up as a batch's ack is genuinely the maximum of everything sent so far - sending
+// "all of source A, then all of source B" instead could hand the client a lower ack than an
+// already-delivered item, forcing (harmless, idempotent, but avoidable) re-sends on the next resume.
+async function* mergeById<T>(sources: AsyncIterable<T>[], getId: (item: T) => string): AsyncGenerator<T> {
+  const iterators = sources.map((source) => source[Symbol.asyncIterator]());
+  const heads = await Promise.all(iterators.map((it) => it.next()));
+
+  for (;;) {
+    let winner: { index: number; value: T } | undefined;
+    for (const [index, head] of heads.entries()) {
+      if (head.done) {
+        continue;
+      }
+      if (!winner || getId(head.value) < getId(winner.value)) {
+        winner = { index, value: head.value };
+      }
+    }
+
+    if (!winner) {
+      return;
+    }
+
+    yield winner.value;
+    heads[winner.index] = await iterators[winner.index].next();
+  }
+}
+
+// A backfill "source" is either a real partner (keyed by partner.createId) or a flagged library share
+// (keyed by library_user.timelineEnabledId - the flag-ENABLE watermark, not the share row's own
+// createId, so a share flagged long after it was created still triggers a backfill). Both feed the
+// exact same PartnerAssetBackfillV2/PartnerAssetExifBackfillV1 loop shape (isEntityBackfillComplete /
+// sendEntityBackfillCompleteAck / per-entry backfill query) - only which repository method gets called
+// for the actual per-entry backfill query differs.
+type AssetBackfillSource = { createId: string; sharedById: string } | { createId: string; libraryId: string };
 
 export const SYNC_TYPES_ORDER = [
   SyncRequestType.AuthUsersV1,
@@ -259,15 +308,102 @@ export class SyncService extends BaseService {
 
   private async syncPartnersV1(options: SyncQueryOptions, response: Writable, checkpointMap: CheckpointMap) {
     const deleteType = SyncEntityType.PartnerDeleteV1;
-    const deletes = this.syncRepository.partner.getDeletes({ ...options, ack: checkpointMap[deleteType] });
-    for await (const { id, ...data } of deletes) {
-      send(response, { type: deleteType, ids: [id], data });
+    const upsertType = SyncEntityType.PartnerV1;
+
+    // Real partner deletes/upserts - same queries as before Phase 6, just collected instead of sent
+    // immediately, so they can be merged with the pseudo arm below by ascending id (§7.4: this
+    // checkpoint is shared between the real and pseudo sources, so "all of one then all of the other"
+    // could hand the client a lower ack than an already-delivered item).
+    const realDeletes: { id: string; data: SyncItem[typeof deleteType] }[] = [];
+    for await (const { id, ...data } of this.syncRepository.partner.getDeletes({
+      ...options,
+      ack: checkpointMap[deleteType],
+    })) {
+      realDeletes.push({ id, data });
     }
 
-    const upsertType = SyncEntityType.PartnerV1;
-    const upserts = this.syncRepository.partner.getUpserts({ ...options, ack: checkpointMap[upsertType] });
-    for await (const { updateId, ...data } of upserts) {
-      send(response, { type: upsertType, ids: [updateId], data });
+    const realUpserts: { id: string; data: SyncItem[typeof upsertType] }[] = [];
+    const realPartnerOwnerIds = new Set<string>();
+    for await (const { updateId, ...data } of this.syncRepository.partner.getUpserts({
+      ...options,
+      ack: checkpointMap[upsertType],
+    })) {
+      realPartnerOwnerIds.add(data.sharedById);
+      realUpserts.push({ id: updateId, data });
+    }
+
+    // realPartnerOwnerIds (built from the ack-gated upserts above) only reflects partners that changed
+    // since the last ack; a long-established, already-fully-synced real partner never appears there,
+    // but must still suppress the pseudo arm (real partner always wins - §4 matrix, §5 invariant #1).
+    // Fetch the FULL current set fresh (cheap: sharedById/createId only, no joins).
+    const allRealPartners = await this.syncRepository.partner.getCreatedAfter({
+      nowId: options.nowId,
+      userId: options.userId,
+    });
+    for (const partner of allRealPartners) {
+      realPartnerOwnerIds.add(partner.sharedById);
+    }
+
+    // --- Pseudo-partner upserts: one per distinct owner with >=1 active flagged share, highest
+    // updateId wins the ack when multiple libraries from the same owner are flagged (§3.1 dedupe). ---
+    const flaggedShares = await this.syncRepository.sharedLibrary.getFlaggedShares(options.userId);
+    const bestUpdateIdByOwner = new Map<string, string>();
+    for (const share of flaggedShares) {
+      if (realPartnerOwnerIds.has(share.ownerId)) {
+        continue;
+      }
+      const best = bestUpdateIdByOwner.get(share.ownerId);
+      if (!best || share.updateId > best) {
+        bestUpdateIdByOwner.set(share.ownerId, share.updateId);
+      }
+    }
+
+    const upsertAck = checkpointMap[upsertType];
+    const pseudoUpserts: { id: string; data: SyncItem[typeof upsertType] }[] = [];
+    for (const [ownerId, updateId] of bestUpdateIdByOwner) {
+      if (upsertAck && updateId <= upsertAck.updateId) {
+        continue;
+      }
+      pseudoUpserts.push({
+        id: updateId,
+        data: { sharedById: ownerId, sharedWithId: options.userId, inTimeline: true },
+      });
+    }
+
+    // --- Pseudo-partner deletes: from library_user_audit rows (§2.7), emitted ONLY when the
+    // transition resolves to 'delete' right now - no remaining flagged share from that owner AND no
+    // real partner. 'reset' outcomes are handled by the mutation-time hooks (shared-library-sync.ts),
+    // NOT here - a stray delete would wipe a pseudo-partner relationship still valid via another
+    // library. Unresolved ('reset'/'none') rows are simply not emitted and get re-evaluated on the
+    // sharee's next sync until they resolve to 'delete' or age out of the 30-day audit window - a
+    // documented, bounded simplification (see IMPLEMENTATION-LOG-phase6.md). ---
+    const pseudoDeletes: { id: string; data: SyncItem[typeof deleteType] }[] = [];
+    for await (const { id, userId, ownerId } of this.syncRepository.sharedLibrary.getShareDeletes({
+      ...options,
+      ack: checkpointMap[deleteType],
+    })) {
+      if (!ownerId) {
+        // The library row is gone too (hard-delete cascade) - covered immediately and independently by
+        // LibraryService.delete / UserService.handleUserDelete's explicit reset hooks.
+        continue;
+      }
+
+      const outcome = await resolveSharedLibraryTransition(
+        { partnerRepository: this.partnerRepository, syncRepository: this.syncRepository },
+        { ownerId, userId },
+      );
+      if (outcome === 'delete') {
+        pseudoDeletes.push({ id, data: { sharedById: ownerId, sharedWithId: userId } });
+      }
+    }
+
+    // Emit: deletes before upserts (existing convention), each merged real+pseudo by ascending id so
+    // the shared per-type checkpoint always advances to the true maximum sent.
+    for (const { id, data } of [...realDeletes, ...pseudoDeletes].sort(compareById)) {
+      send(response, { type: deleteType, ids: [id], data });
+    }
+    for (const { id, data } of [...realUpserts, ...pseudoUpserts].sort(compareById)) {
+      send(response, { type: upsertType, ids: [id], data });
     }
   }
 
@@ -302,33 +438,42 @@ export class SyncService extends BaseService {
     sessionId: string,
   ) {
     const deleteType = SyncEntityType.PartnerAssetDeleteV1;
-    const deletes = this.syncRepository.partnerAsset.getDeletes({ ...options, ack: checkpointMap[deleteType] });
+    // Real hard-deletes, Phase 6 pseudo hard-deletes (§2.5), and Phase 6 scope exits (§2.4) all share
+    // this one checkpoint and all resolve to the same {id, assetId} shape - merge-emit by ascending id
+    // (§3.4/§7.4) rather than draining one source fully before the next.
+    const deletes = mergeById(
+      [
+        this.syncRepository.partnerAsset.getDeletes({ ...options, ack: checkpointMap[deleteType] }),
+        this.syncRepository.sharedLibraryAsset.getHardDeletes({ ...options, ack: checkpointMap[deleteType] }),
+        this.syncRepository.sharedLibraryAsset.getScopeExits({ ...options, ack: checkpointMap[deleteType] }),
+      ],
+      (row) => row.id,
+    );
     for await (const { id, ...data } of deletes) {
       send(response, { type: deleteType, ids: [id], data });
     }
 
     const backfillType = SyncEntityType.PartnerAssetBackfillV2;
     const backfillCheckpoint = checkpointMap[backfillType];
-    const partners = await this.syncRepository.partner.getCreatedAfter({
-      ...options,
-      afterCreateId: backfillCheckpoint?.updateId,
-    });
     const upsertType = SyncEntityType.PartnerAssetV2;
     const upsertCheckpoint = checkpointMap[upsertType];
+
+    const backfillSources = await this.getAssetBackfillSources(options, backfillCheckpoint);
     if (upsertCheckpoint) {
       const endId = upsertCheckpoint.updateId;
 
-      for (const partner of partners) {
-        const createId = partner.createId;
+      for (const source of backfillSources) {
+        const createId = source.createId;
         if (isEntityBackfillComplete(createId, backfillCheckpoint)) {
           continue;
         }
 
         const startId = getStartId(createId, backfillCheckpoint);
-        const backfill = this.syncRepository.partnerAsset.getBackfill(
-          { ...options, afterUpdateId: startId, beforeUpdateId: endId },
-          partner.sharedById,
-        );
+        const backfillOptions = { ...options, afterUpdateId: startId, beforeUpdateId: endId };
+        const backfill =
+          'sharedById' in source
+            ? this.syncRepository.partnerAsset.getBackfill(backfillOptions, source.sharedById)
+            : this.syncRepository.sharedLibraryAsset.getBackfill(backfillOptions, source.libraryId);
 
         for await (const { updateId, ...data } of backfill) {
           send(response, {
@@ -340,18 +485,54 @@ export class SyncService extends BaseService {
 
         sendEntityBackfillCompleteAck(response, backfillType, createId);
       }
-    } else if (partners.length > 0) {
+    } else if (backfillSources.length > 0) {
       await this.upsertBackfillCheckpoint({
         type: backfillType,
         sessionId,
-        createId: partners.at(-1)!.createId,
+        createId: backfillSources.at(-1)!.createId,
       });
     }
 
-    const upserts = this.syncRepository.partnerAsset.getUpserts({ ...options, ack: checkpointMap[upsertType] });
+    // Real partner-asset upserts and Phase 6 pseudo shared-library-asset upserts share the
+    // PartnerAssetV2 checkpoint - same merge-by-id reasoning as the deletes above.
+    const upserts = mergeById(
+      [
+        this.syncRepository.partnerAsset.getUpserts({ ...options, ack: checkpointMap[upsertType] }),
+        this.syncRepository.sharedLibraryAsset.getUpserts({ ...options, ack: checkpointMap[upsertType] }),
+      ],
+      (row) => row.updateId,
+    );
     for await (const { updateId, ...data } of upserts) {
       send(response, { type: upsertType, ids: [updateId], data: mapSyncAssetV2(data) });
     }
+  }
+
+  // Phase 6: the merged, suppressed, checkpoint-windowed set of asset backfill "sources" (real
+  // partners keyed by createId, flagged library shares keyed by timelineEnabledId) shared by
+  // syncPartnerAssetsV2 and syncPartnerAssetExifsV1 - both need the identical enumeration, only the
+  // per-entry backfill query differs (asset vs. asset_exif; ownerId vs. libraryId).
+  private async getAssetBackfillSources(
+    options: SyncQueryOptions,
+    backfillCheckpoint: SyncAck | undefined,
+  ): Promise<AssetBackfillSource[]> {
+    const allRealPartners = await this.syncRepository.partner.getCreatedAfter({
+      nowId: options.nowId,
+      userId: options.userId,
+    });
+    const realPartnerOwnerIds = new Set(allRealPartners.map((partner) => partner.sharedById));
+
+    const flaggedShares = await this.syncRepository.sharedLibrary.getFlaggedShares(options.userId);
+
+    const sources: AssetBackfillSource[] = [
+      ...allRealPartners.map((partner) => ({ createId: partner.createId, sharedById: partner.sharedById })),
+      ...flaggedShares
+        .filter((share) => !realPartnerOwnerIds.has(share.ownerId) && share.timelineEnabledId < options.nowId)
+        .map((share) => ({ createId: share.timelineEnabledId, libraryId: share.libraryId })),
+    ];
+
+    return sources
+      .filter((source) => !backfillCheckpoint || source.createId >= backfillCheckpoint.updateId)
+      .sort((a, b) => (a.createId < b.createId ? -1 : a.createId > b.createId ? 1 : 0));
   }
 
   private async syncAssetExifsV1(options: SyncQueryOptions, response: Writable, checkpointMap: CheckpointMap) {
@@ -385,43 +566,49 @@ export class SyncService extends BaseService {
   ) {
     const backfillType = SyncEntityType.PartnerAssetExifBackfillV1;
     const backfillCheckpoint = checkpointMap[backfillType];
-    const partners = await this.syncRepository.partner.getCreatedAfter({
-      ...options,
-      afterCreateId: backfillCheckpoint?.updateId,
-    });
-
     const upsertType = SyncEntityType.PartnerAssetExifV1;
     const upsertCheckpoint = checkpointMap[upsertType];
+
+    const backfillSources = await this.getAssetBackfillSources(options, backfillCheckpoint);
     if (upsertCheckpoint) {
       const endId = upsertCheckpoint.updateId;
 
-      for (const partner of partners) {
-        const createId = partner.createId;
+      for (const source of backfillSources) {
+        const createId = source.createId;
         if (isEntityBackfillComplete(createId, backfillCheckpoint)) {
           continue;
         }
 
         const startId = getStartId(createId, backfillCheckpoint);
-        const backfill = this.syncRepository.partnerAssetExif.getBackfill(
-          { ...options, afterUpdateId: startId, beforeUpdateId: endId },
-          partner.sharedById,
-        );
+        const backfillOptions = { ...options, afterUpdateId: startId, beforeUpdateId: endId };
+        const backfill =
+          'sharedById' in source
+            ? this.syncRepository.partnerAssetExif.getBackfill(backfillOptions, source.sharedById)
+            : this.syncRepository.sharedLibraryAssetExif.getBackfill(backfillOptions, source.libraryId);
 
         for await (const { updateId, ...data } of backfill) {
-          send(response, { type: backfillType, ids: [partner.createId, updateId], data });
+          send(response, { type: backfillType, ids: [createId, updateId], data });
         }
 
-        sendEntityBackfillCompleteAck(response, backfillType, partner.createId);
+        sendEntityBackfillCompleteAck(response, backfillType, createId);
       }
-    } else if (partners.length > 0) {
+    } else if (backfillSources.length > 0) {
       await this.upsertBackfillCheckpoint({
         type: backfillType,
         sessionId,
-        createId: partners.at(-1)!.createId,
+        createId: backfillSources.at(-1)!.createId,
       });
     }
 
-    const upserts = this.syncRepository.partnerAssetExif.getUpserts({ ...options, ack: checkpointMap[upsertType] });
+    // Real partner-asset-exif upserts and Phase 6 pseudo shared-library-asset-exif upserts share the
+    // PartnerAssetExifV1 checkpoint - same merge-by-id reasoning as syncPartnerAssetsV2.
+    const upserts = mergeById(
+      [
+        this.syncRepository.partnerAssetExif.getUpserts({ ...options, ack: checkpointMap[upsertType] }),
+        this.syncRepository.sharedLibraryAssetExif.getUpserts({ ...options, ack: checkpointMap[upsertType] }),
+      ],
+      (row) => row.updateId,
+    );
     for await (const { updateId, ...data } of upserts) {
       send(response, { type: upsertType, ids: [updateId], data });
     }

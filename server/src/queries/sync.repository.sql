@@ -1069,6 +1069,256 @@ where
 order by
   "person"."updateId" asc
 
+-- SyncRepository.sharedLibrary.getFlaggedShares
+select
+  "library_user"."libraryId",
+  "library"."ownerId",
+  "library_user"."timelineEnabledId",
+  "library_user"."updateId"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and "library_user"."inTimeline" = $2
+
+-- SyncRepository.sharedLibrary.getShareDeletes
+select
+  "library_user_audit"."id",
+  "library_user_audit"."userId",
+  "library"."ownerId"
+from
+  "library_user_audit" as "library_user_audit"
+  left join "library" on "library"."id" = "library_user_audit"."libraryId"
+where
+  "library_user_audit"."id" < $1
+  and "library_user_audit"."id" > $2
+  and "library_user_audit"."userId" = $3
+order by
+  "library_user_audit"."id" asc
+
+-- SyncRepository.sharedLibraryAsset.getBackfill
+select
+  "asset"."id",
+  "asset"."ownerId",
+  "asset"."originalFileName",
+  "asset"."thumbhash",
+  "asset"."checksum",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."localDateTime",
+  "asset"."createdAt",
+  "asset"."type",
+  "asset"."deletedAt",
+  "asset"."visibility",
+  "asset"."duration",
+  "asset"."livePhotoVideoId",
+  "asset"."libraryId",
+  "asset"."width",
+  "asset"."height",
+  "asset"."isEdited",
+  $1 as "isFavorite",
+  $2 as "stackId",
+  "asset"."updateId"
+from
+  "asset" as "asset"
+where
+  "asset"."updateId" < $3
+  and "asset"."updateId" <= $4
+  and "asset"."updateId" > $5
+  and "asset"."libraryId" = $6
+  and "asset"."deletedAt" is null
+  and "asset"."visibility" in ('timeline', 'hidden')
+order by
+  "asset"."updateId" asc
+
+-- SyncRepository.sharedLibraryAsset.getUpserts
+select
+  "asset"."id",
+  "asset"."ownerId",
+  "asset"."originalFileName",
+  "asset"."thumbhash",
+  "asset"."checksum",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."localDateTime",
+  "asset"."createdAt",
+  "asset"."type",
+  "asset"."deletedAt",
+  "asset"."visibility",
+  "asset"."duration",
+  "asset"."livePhotoVideoId",
+  "asset"."libraryId",
+  "asset"."width",
+  "asset"."height",
+  "asset"."isEdited",
+  $1 as "isFavorite",
+  $2 as "stackId",
+  "asset"."updateId"
+from
+  "asset" as "asset"
+where
+  "asset"."updateId" < $3
+  and "asset"."updateId" > $4
+  and "asset"."libraryId" in (
+    select
+      "library_user"."libraryId"
+    from
+      "library_user"
+    where
+      "library_user"."userId" = $5
+      and "library_user"."inTimeline" = $6
+  )
+  and "asset"."deletedAt" is null
+  and "asset"."visibility" in ('timeline', 'hidden')
+order by
+  "asset"."updateId" asc
+
+-- SyncRepository.sharedLibraryAsset.getScopeExits
+select
+  "asset"."updateId" as "id",
+  "asset"."id" as "assetId"
+from
+  "asset" as "asset"
+where
+  "asset"."updateId" < $1
+  and "asset"."updateId" > $2
+  and "asset"."libraryId" in (
+    select
+      "library_user"."libraryId"
+    from
+      "library_user"
+    where
+      "library_user"."userId" = $3
+      and "library_user"."inTimeline" = $4
+  )
+  and (
+    "asset"."deletedAt" is not null
+    or "asset"."visibility" not in ('timeline', 'hidden')
+  )
+order by
+  "asset"."updateId" asc
+
+-- SyncRepository.sharedLibraryAsset.getHardDeletes
+select
+  "id",
+  "assetId"
+from
+  "asset_audit" as "asset_audit"
+where
+  "asset_audit"."id" < $1
+  and "asset_audit"."id" > $2
+  and "ownerId" in (
+    select
+      "library"."ownerId"
+    from
+      "library_user"
+      inner join "library" on "library"."id" = "library_user"."libraryId"
+    where
+      "library_user"."userId" = $3
+      and "library_user"."inTimeline" = $4
+  )
+order by
+  "asset_audit"."id" asc
+
+-- SyncRepository.sharedLibraryAssetExif.getBackfill
+select
+  "asset_exif"."assetId",
+  "asset_exif"."description",
+  "asset_exif"."exifImageWidth",
+  "asset_exif"."exifImageHeight",
+  "asset_exif"."fileSizeInByte",
+  "asset_exif"."orientation",
+  "asset_exif"."dateTimeOriginal",
+  "asset_exif"."modifyDate",
+  "asset_exif"."timeZone",
+  "asset_exif"."latitude",
+  "asset_exif"."longitude",
+  "asset_exif"."projectionType",
+  "asset_exif"."city",
+  "asset_exif"."state",
+  "asset_exif"."country",
+  "asset_exif"."make",
+  "asset_exif"."model",
+  "asset_exif"."lensModel",
+  "asset_exif"."fNumber",
+  "asset_exif"."focalLength",
+  "asset_exif"."iso",
+  "asset_exif"."exposureTime",
+  "asset_exif"."profileDescription",
+  "asset_exif"."rating",
+  "asset_exif"."fps",
+  "asset_exif"."updateId"
+from
+  "asset_exif" as "asset_exif"
+  inner join "asset" on "asset"."id" = "asset_exif"."assetId"
+where
+  "asset_exif"."updateId" < $1
+  and "asset_exif"."updateId" <= $2
+  and "asset_exif"."updateId" > $3
+  and "asset"."libraryId" = $4
+  and "asset"."deletedAt" is null
+  and "asset"."visibility" in ('timeline', 'hidden')
+order by
+  "asset_exif"."updateId" asc
+
+-- SyncRepository.sharedLibraryAssetExif.getUpserts
+select
+  "asset_exif"."assetId",
+  "asset_exif"."description",
+  "asset_exif"."exifImageWidth",
+  "asset_exif"."exifImageHeight",
+  "asset_exif"."fileSizeInByte",
+  "asset_exif"."orientation",
+  "asset_exif"."dateTimeOriginal",
+  "asset_exif"."modifyDate",
+  "asset_exif"."timeZone",
+  "asset_exif"."latitude",
+  "asset_exif"."longitude",
+  "asset_exif"."projectionType",
+  "asset_exif"."city",
+  "asset_exif"."state",
+  "asset_exif"."country",
+  "asset_exif"."make",
+  "asset_exif"."model",
+  "asset_exif"."lensModel",
+  "asset_exif"."fNumber",
+  "asset_exif"."focalLength",
+  "asset_exif"."iso",
+  "asset_exif"."exposureTime",
+  "asset_exif"."profileDescription",
+  "asset_exif"."rating",
+  "asset_exif"."fps",
+  "asset_exif"."updateId"
+from
+  "asset_exif" as "asset_exif"
+where
+  "asset_exif"."updateId" < $1
+  and "asset_exif"."updateId" > $2
+  and "assetId" in (
+    select
+      "id"
+    from
+      "asset"
+    where
+      "asset"."libraryId" in (
+        select
+          "library_user"."libraryId"
+        from
+          "library_user"
+        where
+          "library_user"."userId" = $3
+          and "library_user"."inTimeline" = $4
+      )
+      and "asset"."deletedAt" is null
+      and "asset"."visibility" in ('timeline', 'hidden')
+  )
+order by
+  "asset_exif"."updateId" asc
+
 -- SyncRepository.stack.getDeletes
 select
   "id",
