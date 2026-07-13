@@ -1,10 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import { Kysely, sql } from 'kysely';
+import { Kysely, NotNull, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
 import { columns } from 'src/database';
 import { DummyValue, GenerateSql } from 'src/decorators';
+import { AssetVisibility } from 'src/enum';
 import { DB } from 'src/schema';
 import { SyncAck } from 'src/types';
+
+// Phase 6 (mobile pseudo-partner projection) - the canonical "in scope" visibility values, applied as
+// `.where('asset.visibility', 'in', SHARED_LIBRARY_ASSET_VISIBILITY)` inside every projection query
+// alongside `.where('asset.deletedAt', 'is', null)` (§0.4/§5: the predicate is pinned INSIDE every
+// query, never left to a caller to remember). Mirrors Phase 1's checkSharedLibraryAccess
+// (access.repository.ts). Hidden is admitted ONLY because live-photo motion parts are
+// visibility=hidden and the stock mobile app already excludes visibility=hidden (and deletedAt-set)
+// rows from every local timeline/map surface (verified against mobile/lib's merged_asset.drift and
+// timeline.repository.ts#remote), so it never actually surfaces to a sharee. Archived and Locked never
+// stream; trashed is a scope exit (SharedLibraryAssetsSync.getScopeExits).
+const SHARED_LIBRARY_ASSET_VISIBILITY = [sql.lit(AssetVisibility.Timeline), sql.lit(AssetVisibility.Hidden)];
 
 export type SyncBackfillOptions = {
   nowId: string;
@@ -66,6 +78,9 @@ export class SyncRepository {
   partnerAssetExif: PartnerAssetExifsSync;
   partnerStack: PartnerStackSync;
   person: PersonSync;
+  sharedLibrary: SharedLibrarySync;
+  sharedLibraryAsset: SharedLibraryAssetsSync;
+  sharedLibraryAssetExif: SharedLibraryAssetExifsSync;
   stack: StackSync;
   user: UserSync;
   userMetadata: UserMetadataSync;
@@ -91,6 +106,9 @@ export class SyncRepository {
     this.partnerAssetExif = new PartnerAssetExifsSync(this.db);
     this.partnerStack = new PartnerStackSync(this.db);
     this.person = new PersonSync(this.db);
+    this.sharedLibrary = new SharedLibrarySync(this.db);
+    this.sharedLibraryAsset = new SharedLibraryAssetsSync(this.db);
+    this.sharedLibraryAssetExif = new SharedLibraryAssetExifsSync(this.db);
     this.stack = new StackSync(this.db);
     this.user = new UserSync(this.db);
     this.userMetadata = new UserMetadataSync(this.db);
@@ -428,7 +446,10 @@ class AuthUserSync extends BaseSync {
   }
 }
 
-// Cleanup-only: full mobile sync of shared-library shares is a v1 follow-up.
+// Cleanup-only. Phase 6's mobile pseudo-partner projection (the "v1 follow-up" this comment used to
+// refer to) lives in the sibling SharedLibrarySync/SharedLibraryAssetsSync/SharedLibraryAssetExifsSync
+// classes below, not here - kept separate so this class's one existing, working responsibility
+// (pruning library_user_audit) never has to change.
 class LibraryUserSync extends BaseSync {
   cleanupAuditTable(daysAgo: number) {
     return this.auditCleanup('library_user_audit', daysAgo);
@@ -694,6 +715,181 @@ class PartnerAssetExifsSync extends BaseSync {
           .where('ownerId', 'in', (eb) =>
             eb.selectFrom('partner').select(['sharedById']).where('sharedWithId', '=', options.userId),
           ),
+      )
+      .stream();
+  }
+}
+
+// Phase 6: mobile pseudo-partner projection. For each library owner O with >=1 library shared to user U
+// where library_user.inTimeline = true, the sync stream presents (O -> U) as a pseudo-partner through
+// the EXISTING PartnersV1/PartnerAssetsV2/PartnerAssetExifsV1 wire types (sync.service.ts owns the
+// projection arms; see utils/shared-library-sync.ts for the reset/delete transition decision). No new
+// sync entity or request types are introduced - the stock mobile app already asks for, and already
+// knows how to store and display, all three.
+
+// Relationship-level: which shares are flagged, and which shares were revoked. Mirrors PartnerSync.
+class SharedLibrarySync extends BaseSync {
+  // Deliberately the RAW flagged set - NOT pre-suppressed by real-partner overlap. Some callers need
+  // exactly that raw truth (resolveSharedLibraryTransition checks the real partner separately, and the
+  // "true false" polarity matters for the transition matrix); sync.service.ts's projection arms apply
+  // suppression themselves against the real-partner list they already fetch for the existing arm, so
+  // there is no wasted query either way. Live library + live owner only (a soft-deleted library or a
+  // deleted owner must stop counting as flagged immediately, before any hard-delete cascade completes).
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getFlaggedShares(userId: string) {
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select(['library_user.libraryId', 'library.ownerId', 'library_user.timelineEnabledId', 'library_user.updateId'])
+      .where('library_user.userId', '=', userId)
+      .where('library_user.inTimeline', '=', true)
+      .$narrowType<{ timelineEnabledId: NotNull }>()
+      .execute();
+  }
+
+  // Drives the PartnerDeleteV1 projection (sync.service.ts). library_user_audit only records
+  // (libraryId, userId) - not ownerId - so this resolves ownerId via a left join to the still-live
+  // library row. When the library itself is gone too (a hard-delete cascade deleted both in the same
+  // transaction), ownerId comes back null and the service layer skips the row: those cases are already
+  // covered immediately and independently by the explicit reset hooks in LibraryService.delete and
+  // UserService.handleUserDelete, which run BEFORE the cascade removes the library row.
+  @GenerateSql({ params: [dummyQueryOptions], stream: true })
+  getShareDeletes(options: SyncQueryOptions) {
+    return this.auditQuery('library_user_audit', options)
+      .leftJoin('library', 'library.id', 'library_user_audit.libraryId')
+      .select(['library_user_audit.id', 'library_user_audit.userId', 'library.ownerId'])
+      .where('library_user_audit.userId', '=', options.userId)
+      .stream();
+  }
+}
+
+// Asset-level: the flagged libraries' assets, projected through the PartnerAssetV2/
+// PartnerAssetBackfillV2/PartnerAssetDeleteV1 wire types. Mirrors PartnerAssetsSync, with the §0.4 scope
+// predicate (SHARED_LIBRARY_ASSET_VISIBILITY, above) pinned inside every query.
+class SharedLibraryAssetsSync extends BaseSync {
+  // `syncSharedLibraryAsset` = syncPartnerAsset minus `asset.stackId`; the NULL literal below is the
+  // ONLY stackId column, so the sharee never receives the owner's stack grouping (stacks are not
+  // projected - same exclusion technique upstream uses for `isFavorite`).
+  @GenerateSql({ params: [dummyBackfillOptions, DummyValue.UUID], stream: true })
+  getBackfill(options: SyncBackfillOptions, libraryId: string) {
+    return this.backfillQuery('asset', options)
+      .select(columns.syncSharedLibraryAsset)
+      .select(sql.val(false).as('isFavorite'))
+      .select(sql.val(null).as('stackId'))
+      .select('asset.updateId')
+      .where('asset.libraryId', '=', libraryId)
+      .where('asset.deletedAt', 'is', null)
+      .where('asset.visibility', 'in', SHARED_LIBRARY_ASSET_VISIBILITY)
+      .stream();
+  }
+
+  @GenerateSql({ params: [dummyQueryOptions], stream: true })
+  getUpserts(options: SyncQueryOptions) {
+    const userId = options.userId;
+    return this.upsertQuery('asset', options)
+      .select(columns.syncSharedLibraryAsset)
+      .select(sql.val(false).as('isFavorite'))
+      .select(sql.val(null).as('stackId'))
+      .select('asset.updateId')
+      .where('asset.libraryId', 'in', (eb) =>
+        eb
+          .selectFrom('library_user')
+          .select('library_user.libraryId')
+          .where('library_user.userId', '=', userId)
+          .where('library_user.inTimeline', '=', true),
+      )
+      .where('asset.deletedAt', 'is', null)
+      .where('asset.visibility', 'in', SHARED_LIBRARY_ASSET_VISIBILITY)
+      .stream();
+  }
+
+  // Scope exits (plan §2.4/§3.4): an asset that stops matching the scope predicate (archived, trashed,
+  // moved out of visibility scope) while its library is STILL flagged-shared to U. Emitted by
+  // sync.service.ts as PartnerAssetDeleteV1 - id + updateId ONLY, never metadata, matching the security
+  // invariant that a scope-exit event must not leak the asset's new (out-of-scope) state to the sharee.
+  // Aliased to the SAME {id, assetId} shape getHardDeletes/the real-partner getDeletes use - `id` here
+  // is asset.updateId (the sortable uuidv7 ack/merge key), NOT asset.id (a random, unordered uuid) -
+  // so sync.service.ts can merge all three delete sources by a single ascending `id` comparison.
+  @GenerateSql({ params: [dummyQueryOptions], stream: true })
+  getScopeExits(options: SyncQueryOptions) {
+    const userId = options.userId;
+    return this.upsertQuery('asset', options)
+      .select(['asset.updateId as id', 'asset.id as assetId'])
+      .where('asset.libraryId', 'in', (eb) =>
+        eb
+          .selectFrom('library_user')
+          .select('library_user.libraryId')
+          .where('library_user.userId', '=', userId)
+          .where('library_user.inTimeline', '=', true),
+      )
+      .where((eb) =>
+        eb.or([
+          eb('asset.deletedAt', 'is not', null),
+          eb('asset.visibility', 'not in', SHARED_LIBRARY_ASSET_VISIBILITY),
+        ]),
+      )
+      .stream();
+  }
+
+  // Over-broad by owner exactly like PartnerAssetsSync.getDeletes - asset_audit has no libraryId
+  // (asset-audit.table.ts), so owner-scope is the finest available granularity. Unknown ids are
+  // client no-ops, matching the existing real-partner precedent.
+  @GenerateSql({ params: [dummyQueryOptions], stream: true })
+  getHardDeletes(options: SyncQueryOptions) {
+    const userId = options.userId;
+    return this.auditQuery('asset_audit', options)
+      .select(['id', 'assetId'])
+      .where('ownerId', 'in', (eb) =>
+        eb
+          .selectFrom('library_user')
+          .innerJoin('library', 'library.id', 'library_user.libraryId')
+          .select('library.ownerId')
+          .where('library_user.userId', '=', userId)
+          .where('library_user.inTimeline', '=', true),
+      )
+      .stream();
+  }
+}
+
+// Exif-level: equivalents of 2.2/2.3, modeled on PartnerAssetExifsSync, with the same library + scope
+// predicate applied via the asset join/subquery.
+class SharedLibraryAssetExifsSync extends BaseSync {
+  @GenerateSql({ params: [dummyBackfillOptions, DummyValue.UUID], stream: true })
+  getBackfill(options: SyncBackfillOptions, libraryId: string) {
+    return this.backfillQuery('asset_exif', options)
+      .select(columns.syncAssetExif)
+      .select('asset_exif.updateId')
+      .innerJoin('asset', 'asset.id', 'asset_exif.assetId')
+      .where('asset.libraryId', '=', libraryId)
+      .where('asset.deletedAt', 'is', null)
+      .where('asset.visibility', 'in', SHARED_LIBRARY_ASSET_VISIBILITY)
+      .stream();
+  }
+
+  @GenerateSql({ params: [dummyQueryOptions], stream: true })
+  getUpserts(options: SyncQueryOptions) {
+    const userId = options.userId;
+    return this.upsertQuery('asset_exif', options)
+      .select(columns.syncAssetExif)
+      .select('asset_exif.updateId')
+      .where('assetId', 'in', (eb) =>
+        eb
+          .selectFrom('asset')
+          .select('id')
+          .where('asset.libraryId', 'in', (eb) =>
+            eb
+              .selectFrom('library_user')
+              .select('library_user.libraryId')
+              .where('library_user.userId', '=', userId)
+              .where('library_user.inTimeline', '=', true),
+          )
+          .where('asset.deletedAt', 'is', null)
+          .where('asset.visibility', 'in', SHARED_LIBRARY_ASSET_VISIBILITY),
       )
       .stream();
   }
