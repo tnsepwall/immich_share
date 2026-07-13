@@ -6,6 +6,7 @@ import { mapUser } from 'src/dtos/user.dto';
 import { Permission } from 'src/enum';
 import { PartnerDirection, PartnerIds } from 'src/repositories/partner.repository';
 import { BaseService } from 'src/services/base.service';
+import { maybeResetForSharedLibraryTransition } from 'src/utils/shared-library-sync';
 
 @Injectable()
 export class PartnerService extends BaseService {
@@ -28,6 +29,19 @@ export class PartnerService extends BaseService {
     }
 
     await this.partnerRepository.remove(partnerId);
+
+    // Phase 6: a real partner just disappeared - if the sharee still has a flagged library from this
+    // same owner, the mobile pseudo-partner projection must take back over, which needs a full sync
+    // reset (matrix row "real partner deleted, flagged shares remain"). No-op when the sharee has no
+    // flagged library from this owner at all.
+    await maybeResetForSharedLibraryTransition(
+      {
+        partnerRepository: this.partnerRepository,
+        syncRepository: this.syncRepository,
+        sessionRepository: this.sessionRepository,
+      },
+      { ownerId: auth.user.id, userId: sharedWithId },
+    );
   }
 
   async search(auth: AuthDto, { direction }: PartnerSearchDto): Promise<PartnerResponseDto[]> {

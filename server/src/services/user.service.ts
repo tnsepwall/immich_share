@@ -22,6 +22,7 @@ import { ImmichFileResponse } from 'src/utils/file';
 import { mimeTypes } from 'src/utils/mime-types';
 import { getPreferences, getPreferencesPartial, mergePreferences } from 'src/utils/preferences';
 import { generateProfileImage } from 'src/utils/profile-image';
+import { maybeResetForSharedLibraryTransition } from 'src/utils/shared-library-sync';
 
 @Injectable()
 export class UserService extends BaseService {
@@ -285,9 +286,34 @@ export class UserService extends BaseService {
       await this.storageRepository.unlinkDir(folder, { recursive: true, force: true });
     }
 
+    // Phase 6: capture every sharee with a flagged library from this owner BEFORE the hard delete
+    // cascades the owner's libraries (and their library_user rows) away - matrix row "owner deleted",
+    // given the same reset-or-nothing treatment as an explicit unshare/library-delete.
+    const ownedLibraries = await this.libraryRepository.getOwned(user.id);
+    const affectedUserIds = new Set<string>();
+    for (const library of ownedLibraries) {
+      const sharedUsers = await this.libraryRepository.getSharedUsers(library.id);
+      for (const share of sharedUsers) {
+        if (share.inTimeline) {
+          affectedUserIds.add(share.userId);
+        }
+      }
+    }
+
     this.logger.warn(`Removing user from database: ${user.id}`);
     await this.albumRepository.deleteAll(user.id);
     await this.userRepository.delete(user, true);
+
+    for (const userId of affectedUserIds) {
+      await maybeResetForSharedLibraryTransition(
+        {
+          partnerRepository: this.partnerRepository,
+          syncRepository: this.syncRepository,
+          sessionRepository: this.sessionRepository,
+        },
+        { ownerId: user.id, userId },
+      );
+    }
 
     await this.eventRepository.emit('UserDelete', user);
   }

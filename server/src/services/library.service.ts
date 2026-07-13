@@ -45,6 +45,7 @@ import { BaseService } from 'src/services/base.service';
 import { JobOf } from 'src/types';
 import { mimeTypes } from 'src/utils/mime-types';
 import { handlePromiseError } from 'src/utils/misc';
+import { maybeResetForSharedLibraryTransition } from 'src/utils/shared-library-sync';
 
 @Injectable()
 export class LibraryService extends BaseService {
@@ -310,7 +311,13 @@ export class LibraryService extends BaseService {
   async updateMyShare(auth: AuthDto, id: string, dto: LibraryUserSelfUpdateDto): Promise<SharedLibraryResponseDto> {
     await this.requireAccess({ auth, permission: Permission.LibraryUserSelfUpdate, ids: [id] });
 
-    const updated = await this.libraryRepository.updateUser(id, auth.user.id, { inTimeline: dto.inTimeline });
+    // Phase 6: read the pre-transition state first - only a genuine true->false transition can leave a
+    // stale mobile pseudo-partner projection behind. A redundant false->false (or true->true) call has
+    // nothing to reset, and must not force an unrelated, still-valid flagged library to full-resync.
+    const existing = await this.libraryRepository.getUserShare(id, auth.user.id);
+    const wasInTimeline = existing?.inTimeline ?? false;
+
+    const updated = await this.libraryRepository.updateMyShare(id, auth.user.id, dto.inTimeline);
     if (!updated) {
       throw new BadRequestException('Library is not shared with user');
     }
@@ -321,6 +328,17 @@ export class LibraryService extends BaseService {
       throw new BadRequestException('Library is not shared with user');
     }
 
+    if (wasInTimeline && !dto.inTimeline) {
+      await maybeResetForSharedLibraryTransition(
+        {
+          partnerRepository: this.partnerRepository,
+          syncRepository: this.syncRepository,
+          sessionRepository: this.sessionRepository,
+        },
+        { ownerId: library.owner.id, userId: auth.user.id },
+      );
+    }
+
     return mapSharedLibrary(library);
   }
 
@@ -329,19 +347,32 @@ export class LibraryService extends BaseService {
       userId = auth.user.id;
     }
 
-    await this.findOrFail(id);
+    const library = await this.findOrFail(id);
 
     if (auth.user.id !== userId && !auth.user.isAdmin) {
       await this.requireAccess({ auth, permission: Permission.LibraryShare, ids: [id] });
     }
 
     const sharedUsers = await this.libraryRepository.getSharedUsers(id);
-    const exists = sharedUsers.some((share) => share.userId === userId);
-    if (!exists) {
+    const share = sharedUsers.find((share) => share.userId === userId);
+    if (!share) {
       throw new BadRequestException('Library is not shared with user');
     }
 
     await this.libraryRepository.removeUser(id, userId);
+
+    // Phase 6: only worth checking when the share being removed was itself actively flagged - an
+    // unshare of a never-flagged library never touched the mobile pseudo-partner projection.
+    if (share.inTimeline) {
+      await maybeResetForSharedLibraryTransition(
+        {
+          partnerRepository: this.partnerRepository,
+          syncRepository: this.syncRepository,
+          sessionRepository: this.sessionRepository,
+        },
+        { ownerId: library.ownerId, userId },
+      );
+    }
   }
 
   @OnJob({ name: JobName.LibraryDeleteCheck, queue: QueueName.Library })
@@ -479,14 +510,32 @@ export class LibraryService extends BaseService {
   }
 
   async delete(id: string) {
-    await this.findOrFail(id);
+    const library = await this.findOrFail(id);
 
     if (this.watchLibraries) {
       await this.unwatch(id);
     }
 
+    // Phase 6: capture which sharees had this library flagged BEFORE soft-deleting it. A soft delete
+    // never touches library_user rows, so nothing else proactively tells an affected sharee's phone -
+    // matrix row "library soft-deleted / owner deleted", treated exactly like an explicit unshare for
+    // each previously-flagged sharee.
+    const sharedUsers = await this.libraryRepository.getSharedUsers(id);
+    const flaggedUserIds = sharedUsers.filter((share) => share.inTimeline).map((share) => share.userId);
+
     await this.libraryRepository.softDelete(id);
     await this.jobRepository.queue({ name: JobName.LibraryDelete, data: { id } });
+
+    for (const userId of flaggedUserIds) {
+      await maybeResetForSharedLibraryTransition(
+        {
+          partnerRepository: this.partnerRepository,
+          syncRepository: this.syncRepository,
+          sessionRepository: this.sessionRepository,
+        },
+        { ownerId: library.ownerId, userId },
+      );
+    }
   }
 
   @OnJob({ name: JobName.LibraryDelete, queue: QueueName.Library })
