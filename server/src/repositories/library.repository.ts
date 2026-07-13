@@ -182,6 +182,19 @@ export class LibraryRepository {
       .executeTakeFirst();
   }
 
+  // Phase 6: cheap single-row lookup so callers can read a share's pre-transition state (e.g. was this
+  // share flagged before the caller's mutation) without pulling the full owner/library-joined shape
+  // that getSharedUsers/getSharedWithUser return.
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  getUserShare(libraryId: string, userId: string) {
+    return this.db
+      .selectFrom('library_user')
+      .selectAll()
+      .where('libraryId', '=', libraryId)
+      .where('userId', '=', userId)
+      .executeTakeFirst();
+  }
+
   // Sharee's own self-service update (currently just `inTimeline`) - deliberately separate from
   // updateUserRole, which is owner/admin-only. The caller (LibraryService.updateMyShare) always pins
   // userId to auth.user.id; this method has no other authorization opinion of its own.
@@ -190,6 +203,34 @@ export class LibraryRepository {
     return this.db
       .updateTable('library_user')
       .set(update)
+      .where('libraryId', '=', libraryId)
+      .where('userId', '=', userId)
+      .returningAll()
+      .executeTakeFirst();
+  }
+
+  // Phase 6: sets `inTimeline` AND, in the SAME statement, the `timelineEnabledId` backfill watermark
+  // (schema/tables/library-user.table.ts has the full rationale). The CASE expression's `inTimeline`/
+  // `timelineEnabledId` references on the right-hand side of SET read the PRE-update row image (standard
+  // SQL semantics - every expression in one SET list sees the same pre-update snapshot, regardless of
+  // what else the statement assigns), so this atomically distinguishes all four transitions in one
+  // round trip with no read-then-write race: false->false (stays null), false->true (freshly stamped),
+  // true->true (watermark preserved, no spurious re-backfill), true->false (cleared to null).
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID, true] })
+  updateMyShare(libraryId: string, userId: string, inTimeline: boolean) {
+    return this.db
+      .updateTable('library_user')
+      .set((eb) => ({
+        inTimeline,
+        timelineEnabledId: inTimeline
+          ? eb
+              .case()
+              .when('inTimeline', '=', false)
+              .then(eb.fn<string>('immich_uuid_v7', []))
+              .else(eb.ref('timelineEnabledId'))
+              .end()
+          : null,
+      }))
       .where('libraryId', '=', libraryId)
       .where('userId', '=', userId)
       .returningAll()
