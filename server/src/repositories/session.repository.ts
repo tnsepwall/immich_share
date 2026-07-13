@@ -137,6 +137,18 @@ export class SessionRepository {
     await this.db.updateTable('session').set({ pinExpiresAt: null }).where('userId', '=', userId).execute();
   }
 
+  // Phase 6: forces every session of `userId` to receive SyncResetV1 on its NEXT /sync/stream call.
+  // Deliberately NOT resetSyncProgress (below) - that method does the opposite (clears the flag and
+  // wipes checkpoints as the LAST step of an already-agreed reset, called from within stream()/setAcks()
+  // for the session that's live in the current request). isPendingSyncReset is the flag stream() checks
+  // unconditionally on every call (sync.service.ts's `stream` method, near the top); flipping it here is
+  // the only way to make a session reset on some FUTURE call it, from code that isn't handling that
+  // session's request right now (e.g. a share revocation happening on a different session entirely).
+  @GenerateSql({ params: [DummyValue.UUID] })
+  async markPendingSyncReset(userId: string) {
+    await this.db.updateTable('session').set({ isPendingSyncReset: true }).where('userId', '=', userId).execute();
+  }
+
   @GenerateSql({ params: [DummyValue.UUID] })
   async resetSyncProgress(sessionId: string) {
     await this.db.transaction().execute((tx) => {

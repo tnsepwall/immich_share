@@ -109,6 +109,15 @@ where
 returning
   *
 
+-- LibraryRepository.getUserShare
+select
+  *
+from
+  "library_user"
+where
+  "libraryId" = $1
+  and "userId" = $2
+
 -- LibraryRepository.updateUser
 update "library_user"
 set
@@ -116,6 +125,20 @@ set
 where
   "libraryId" = $2
   and "userId" = $3
+returning
+  *
+
+-- LibraryRepository.updateMyShare
+update "library_user"
+set
+  "inTimeline" = $1,
+  "timelineEnabledId" = case
+    when "inTimeline" = $2 then immich_uuid_v7 ()
+    else "timelineEnabledId"
+  end
+where
+  "libraryId" = $3
+  and "userId" = $4
 returning
   *
 

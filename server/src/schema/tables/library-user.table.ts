@@ -50,6 +50,16 @@ export class LibraryUserTable {
   @Column({ type: 'boolean', default: false })
   inTimeline!: Generated<boolean>;
 
+  // Phase 6: backfill-keying watermark for the mobile pseudo-partner projection. Set to a fresh
+  // immich_uuid_v7() every time inTimeline transitions false->true, cleared to NULL on true->false
+  // (LibraryService.updateMyShare, in the same update as inTimeline). Deliberately NOT createId:
+  // createId is the row's own creation time, but a share can be created long before the sharee ever
+  // flags it for their timeline, and the mobile sync backfill loop needs a watermark keyed to the
+  // flag-enable moment so a late opt-in still triggers a backfill (sync.repository.ts's
+  // PartnerSync.getCreatedAfter is the model this mirrors).
+  @Column({ type: 'uuid', nullable: true })
+  timelineEnabledId!: string | null;
+
   @CreateIdColumn({ index: true })
   createId!: Generated<string>;
 

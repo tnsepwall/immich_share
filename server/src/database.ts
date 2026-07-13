@@ -40,6 +40,7 @@ export type LibraryUser = {
   user: ShallowDehydrateObject<User>;
   role: LibraryUserRole;
   inTimeline: boolean;
+  timelineEnabledId: string | null;
   createId: string;
   createdAt: Date;
   updateId: string;
@@ -454,6 +455,31 @@ export const columns = {
     'asset.duration',
     'asset.livePhotoVideoId',
     'asset.stackId',
+    'asset.libraryId',
+    'asset.width',
+    'asset.height',
+    'asset.isEdited',
+  ],
+  // Shared-library pseudo-partner projection (phase 6): syncPartnerAsset minus `asset.stackId`.
+  // Stacks are never projected to library sharees (no widening of stack sync), so the queries
+  // select a NULL literal aliased `stackId` instead - excluding the real column here (rather than
+  // selecting both and relying on the driver's duplicate-column overwrite order) is what upstream
+  // already does for `isFavorite`.
+  syncSharedLibraryAsset: [
+    'asset.id',
+    'asset.ownerId',
+    'asset.originalFileName',
+    'asset.thumbhash',
+    'asset.checksum',
+    'asset.fileCreatedAt',
+    'asset.fileModifiedAt',
+    'asset.localDateTime',
+    'asset.createdAt',
+    'asset.type',
+    'asset.deletedAt',
+    'asset.visibility',
+    'asset.duration',
+    'asset.livePhotoVideoId',
     'asset.libraryId',
     'asset.width',
     'asset.height',
