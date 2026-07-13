@@ -260,6 +260,7 @@ describe(UserService.name, () => {
       const options = { force: true, recursive: true };
 
       mocks.user.get.mockResolvedValue(user);
+      mocks.library.getOwned.mockResolvedValue([]);
 
       await sut.handleUserDelete({ id: user.id });
 
@@ -291,6 +292,7 @@ describe(UserService.name, () => {
       const user = { id: 'deleted-user', deletedAt: makeDeletedAt(10), storageLabel: 'admin' } as UserAdmin;
 
       mocks.user.get.mockResolvedValue(user);
+      mocks.library.getOwned.mockResolvedValue([]);
 
       await sut.handleUserDelete({ id: user.id });
 
