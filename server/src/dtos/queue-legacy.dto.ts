@@ -29,6 +29,7 @@ const QueuesResponseLegacySchema = z
     [QueueName.Search]: QueueResponseLegacySchema,
     [QueueName.DuplicateDetection]: QueueResponseLegacySchema,
     [QueueName.FaceDetection]: QueueResponseLegacySchema,
+    [QueueName.VideoFaceDetection]: QueueResponseLegacySchema,
     [QueueName.FacialRecognition]: QueueResponseLegacySchema,
     [QueueName.Sidecar]: QueueResponseLegacySchema,
     [QueueName.Library]: QueueResponseLegacySchema,

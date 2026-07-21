@@ -61,7 +61,11 @@
   async function loadPeople() {
     const timeout = setTimeout(() => (isShowLoadingPeople = true), timeBeforeShowLoadingSpinner);
     try {
-      peopleWithFaces = await getFaces({ id: assetId });
+      // Video-frame faces (timestampMs set) cannot be cropped from the displayed preview image,
+      // so only preview-derived faces are editable here.
+      peopleWithFaces = await getFaces({ id: assetId }).then((faces) =>
+        faces.filter((face) => face.timestampMs === undefined),
+      );
     } catch (error) {
       handleError(error, $t('errors.cant_get_faces'));
     } finally {

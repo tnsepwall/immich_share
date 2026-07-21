@@ -1,5 +1,5 @@
 import { Kysely } from 'kysely';
-import { AssetFileType, AssetVisibility, LibraryUserRole } from 'src/enum';
+import { AssetFileType, AssetVisibility, LibraryUserRole, SourceType } from 'src/enum';
 import { LoggingRepository } from 'src/repositories/logging.repository';
 import { PersonRepository } from 'src/repositories/person.repository';
 import { DB } from 'src/schema';
@@ -47,6 +47,22 @@ beforeAll(async () => {
 });
 
 describe(PersonRepository.name, () => {
+  describe('deleteFaces', () => {
+    it('should not delete video-frame faces', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+      const { assetFace: previewFace } = await ctx.newAssetFace({ assetId: asset.id });
+      const { assetFace: videoFace } = await ctx.newAssetFace({ assetId: asset.id, timestampMs: 4000 });
+
+      await sut.deleteFaces({ sourceType: SourceType.MachineLearning });
+
+      const remaining = await ctx.database.selectFrom('asset_face').select(['id']).execute();
+      expect(remaining.map((face) => face.id)).not.toContain(previewFace.id);
+      expect(remaining.map((face) => face.id)).toContain(videoFace.id);
+    });
+  });
+
   describe('getDataForThumbnailGenerationJob', () => {
     it('should not return the edited preview path', async () => {
       const { ctx, sut } = setup();
@@ -273,6 +289,23 @@ describe(PersonRepository.name, () => {
 
       expect(result).toEqual([expect.objectContaining({ person: null })]);
     });
+
+    it('should exclude video-frame faces, whose bounding boxes are frame-relative', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { assetFace: previewFace } = await ctx.newAssetFace({ assetId: asset.id });
+      await ctx.newAssetFace({ assetId: asset.id, timestampMs: 4000 });
+
+      const result = await sut.getFacesForLibraryAsset(library.id, asset.id);
+
+      expect(result.map((face) => face.id)).toEqual([previewFace.id]);
+    });
   });
 
   describe('getAllForSharedLibraries (Phase 5)', () => {
@@ -334,6 +367,24 @@ describe(PersonRepository.name, () => {
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Named Person' });
       await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      const result = await sut.getAllForSharedLibraries([library.id], { take: 500, skip: 0 }, 3);
+      expect(result.items.map((p) => p.id)).toEqual([person.id]);
+    });
+
+    it('should count video-frame faces toward minimumFaces, matching owner-side counting', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id, name: '' });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id, timestampMs: 2000 });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id, timestampMs: 4000 });
 
       const result = await sut.getAllForSharedLibraries([library.id], { take: 500, skip: 0 }, 3);
       expect(result.items.map((p) => p.id)).toEqual([person.id]);

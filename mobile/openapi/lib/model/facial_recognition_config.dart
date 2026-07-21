@@ -18,6 +18,9 @@ class FacialRecognitionConfig {
     required this.minFaces,
     required this.minScore,
     required this.modelName,
+    required this.videoEnabled,
+    required this.videoFrameInterval,
+    required this.videoMaxFrames,
   });
 
   /// Whether the task is enabled
@@ -44,13 +47,31 @@ class FacialRecognitionConfig {
   /// Name of the model to use
   String modelName;
 
+  /// Whether to detect faces in sampled video frames
+  bool videoEnabled;
+
+  /// Seconds between sampled frames when detecting faces in videos
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 300
+  int videoFrameInterval;
+
+  /// Maximum number of frames to sample per video for face detection
+  ///
+  /// Minimum value: 1
+  /// Maximum value: 500
+  int videoMaxFrames;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is FacialRecognitionConfig &&
     other.enabled == enabled &&
     other.maxDistance == maxDistance &&
     other.minFaces == minFaces &&
     other.minScore == minScore &&
-    other.modelName == modelName;
+    other.modelName == modelName &&
+    other.videoEnabled == videoEnabled &&
+    other.videoFrameInterval == videoFrameInterval &&
+    other.videoMaxFrames == videoMaxFrames;
 
   @override
   int get hashCode =>
@@ -59,10 +80,13 @@ class FacialRecognitionConfig {
     (maxDistance.hashCode) +
     (minFaces.hashCode) +
     (minScore.hashCode) +
-    (modelName.hashCode);
+    (modelName.hashCode) +
+    (videoEnabled.hashCode) +
+    (videoFrameInterval.hashCode) +
+    (videoMaxFrames.hashCode);
 
   @override
-  String toString() => 'FacialRecognitionConfig[enabled=$enabled, maxDistance=$maxDistance, minFaces=$minFaces, minScore=$minScore, modelName=$modelName]';
+  String toString() => 'FacialRecognitionConfig[enabled=$enabled, maxDistance=$maxDistance, minFaces=$minFaces, minScore=$minScore, modelName=$modelName, videoEnabled=$videoEnabled, videoFrameInterval=$videoFrameInterval, videoMaxFrames=$videoMaxFrames]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -71,6 +95,9 @@ class FacialRecognitionConfig {
       json[r'minFaces'] = this.minFaces;
       json[r'minScore'] = this.minScore;
       json[r'modelName'] = this.modelName;
+      json[r'videoEnabled'] = this.videoEnabled;
+      json[r'videoFrameInterval'] = this.videoFrameInterval;
+      json[r'videoMaxFrames'] = this.videoMaxFrames;
     return json;
   }
 
@@ -88,6 +115,9 @@ class FacialRecognitionConfig {
         minFaces: mapValueOfType<int>(json, r'minFaces')!,
         minScore: mapValueOfType<double>(json, r'minScore')!,
         modelName: mapValueOfType<String>(json, r'modelName')!,
+        videoEnabled: mapValueOfType<bool>(json, r'videoEnabled')!,
+        videoFrameInterval: mapValueOfType<int>(json, r'videoFrameInterval')!,
+        videoMaxFrames: mapValueOfType<int>(json, r'videoMaxFrames')!,
       );
     }
     return null;
@@ -140,6 +170,9 @@ class FacialRecognitionConfig {
     'minFaces',
     'minScore',
     'modelName',
+    'videoEnabled',
+    'videoFrameInterval',
+    'videoMaxFrames',
   };
 }
 

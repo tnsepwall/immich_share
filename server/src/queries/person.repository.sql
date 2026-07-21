@@ -12,6 +12,46 @@ delete from "person"
 where
   "person"."id" in ($1)
 
+-- PersonRepository.getVideoFacesWithEmbeddings
+select
+  "asset_face"."id",
+  "asset_face"."imageWidth",
+  "asset_face"."imageHeight",
+  "asset_face"."boundingBoxX1",
+  "asset_face"."boundingBoxY1",
+  "asset_face"."boundingBoxX2",
+  "asset_face"."boundingBoxY2",
+  "asset_face"."timestampMs",
+  "face_search"."embedding"
+from
+  "asset_face"
+  inner join "face_search" on "face_search"."faceId" = "asset_face"."id"
+where
+  "asset_face"."assetId" = $1
+  and "asset_face"."sourceType" = $2
+  and "asset_face"."deletedAt" is null
+order by
+  "asset_face"."id"
+
+-- PersonRepository.getPersonIdsByFaceAssetIds
+select
+  "person"."id"
+from
+  "person"
+where
+  "person"."faceAssetId" in ($1)
+
+-- PersonRepository.getVideoFaceIds
+select
+  "asset_face"."id"
+from
+  "asset_face"
+where
+  "asset_face"."assetId" = $1
+  and "asset_face"."timestampMs" is not null
+  and "asset_face"."sourceType" = $2
+  and "asset_face"."deletedAt" is null
+
 -- PersonRepository.getFileSamples
 select
   "id",
@@ -326,6 +366,7 @@ where
   "asset_face"."assetId" = $2
   and "asset_face"."deletedAt" is null
   and "asset_face"."isVisible" = $3
+  and "asset_face"."timestampMs" is null
 order by
   "asset_face"."boundingBoxX1" asc
 
@@ -399,6 +440,7 @@ select
   "asset_face"."boundingBoxY2" as "y2",
   "asset_face"."imageWidth" as "oldWidth",
   "asset_face"."imageHeight" as "oldHeight",
+  "asset_face"."timestampMs",
   "asset"."type",
   "asset"."originalPath",
   "asset_exif"."orientation" as "exifOrientation",

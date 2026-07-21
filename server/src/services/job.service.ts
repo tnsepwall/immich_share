@@ -70,6 +70,10 @@ const asJobItem = (dto: JobCreateDto): JobItem => {
       return { name: JobName.IntegrityDeleteReportType, data: { type: IntegrityReport.ChecksumFail } };
     }
 
+    case ManualJobName.VideoFaceDetection: {
+      return { name: JobName.AssetVideoDetectFacesQueueAll, data: { force: true } };
+    }
+
     default: {
       throw new BadRequestException('Invalid job name');
     }

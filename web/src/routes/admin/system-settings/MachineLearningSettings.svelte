@@ -251,6 +251,47 @@
             isEdited={configToEdit.machineLearning.facialRecognition.minFaces !==
               config.machineLearning.facialRecognition.minFaces}
           />
+
+          <SettingSwitch
+            title={$t('admin.machine_learning_video_face_detection_enabled')}
+            subtitle={$t('admin.machine_learning_video_face_detection_enabled_description')}
+            disabled={disabled ||
+              !configToEdit.machineLearning.enabled ||
+              !configToEdit.machineLearning.facialRecognition.enabled}
+            bind:checked={configToEdit.machineLearning.facialRecognition.videoEnabled}
+          />
+
+          <SettingInputField
+            inputType={SettingInputFieldType.NUMBER}
+            label={$t('admin.machine_learning_video_face_detection_frame_interval')}
+            description={$t('admin.machine_learning_video_face_detection_frame_interval_description')}
+            bind:value={configToEdit.machineLearning.facialRecognition.videoFrameInterval}
+            step="1"
+            min={1}
+            max={300}
+            disabled={disabled ||
+              !configToEdit.machineLearning.enabled ||
+              !configToEdit.machineLearning.facialRecognition.enabled ||
+              !configToEdit.machineLearning.facialRecognition.videoEnabled}
+            isEdited={configToEdit.machineLearning.facialRecognition.videoFrameInterval !==
+              config.machineLearning.facialRecognition.videoFrameInterval}
+          />
+
+          <SettingInputField
+            inputType={SettingInputFieldType.NUMBER}
+            label={$t('admin.machine_learning_video_face_detection_max_frames')}
+            description={$t('admin.machine_learning_video_face_detection_max_frames_description')}
+            bind:value={configToEdit.machineLearning.facialRecognition.videoMaxFrames}
+            step="1"
+            min={1}
+            max={500}
+            disabled={disabled ||
+              !configToEdit.machineLearning.enabled ||
+              !configToEdit.machineLearning.facialRecognition.enabled ||
+              !configToEdit.machineLearning.facialRecognition.videoEnabled}
+            isEdited={configToEdit.machineLearning.facialRecognition.videoMaxFrames !==
+              config.machineLearning.facialRecognition.videoMaxFrames}
+          />
         </div>
       </SettingAccordion>
 

@@ -134,6 +134,7 @@ const ServerFeaturesSchema = z
     duplicateDetection: z.boolean().describe('Whether duplicate detection is enabled'),
     configFile: z.boolean().describe('Whether config file is available'),
     facialRecognition: z.boolean().describe('Whether facial recognition is enabled'),
+    videoFaceDetection: z.boolean().describe('Whether video face detection is enabled'),
     map: z.boolean().describe('Whether map feature is enabled'),
     trash: z.boolean().describe('Whether trash feature is enabled'),
     reverseGeocoding: z.boolean().describe('Whether reverse geocoding is enabled'),

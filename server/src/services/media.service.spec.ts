@@ -1622,6 +1622,56 @@ describe(MediaService.name, () => {
       expect(mocks.person.update).toHaveBeenCalledWith({ id: person.id, thumbnailPath: expect.any(String) });
     });
 
+    it('should extract the source frame for a face detected in a video frame', async () => {
+      const person = PersonFactory.create();
+
+      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.videoFrameThumbnail);
+      mocks.storage.createTempDir.mockResolvedValue('/tmp/person-thumb');
+      mocks.media.extractVideoFrame.mockResolvedValue(true);
+      mocks.media.generateThumbnail.mockResolvedValue();
+      const data = Buffer.from('');
+      const info = { width: 1000, height: 1000 } as OutputInfo;
+      mocks.media.decodeImage.mockResolvedValue({ data, info });
+
+      await expect(sut.handleGeneratePersonThumbnail({ id: person.id })).resolves.toBe(JobStatus.Success);
+
+      // frame is re-extracted at the face's timestamp (8000 ms → 8 s) and used as the crop source
+      expect(mocks.media.extractVideoFrame).toHaveBeenCalledWith(
+        '/original/path.mp4',
+        '/tmp/person-thumb/frame.jpg',
+        8,
+        1440,
+      );
+      expect(mocks.media.decodeImage).toHaveBeenCalledWith('/tmp/person-thumb/frame.jpg', expect.any(Object));
+      expect(mocks.person.update).toHaveBeenCalledWith({ id: person.id, thumbnailPath: expect.any(String) });
+      expect(mocks.storage.unlinkDir).toHaveBeenCalledWith('/tmp/person-thumb', { recursive: true, force: true });
+    });
+
+    it('should fail when the source frame for a video face cannot be extracted', async () => {
+      const person = PersonFactory.create();
+
+      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.videoFrameThumbnail);
+      mocks.storage.createTempDir.mockResolvedValue('/tmp/person-thumb');
+      mocks.media.extractVideoFrame.mockResolvedValue(false);
+
+      await expect(sut.handleGeneratePersonThumbnail({ id: person.id })).resolves.toBe(JobStatus.Failed);
+
+      expect(mocks.media.decodeImage).not.toHaveBeenCalled();
+      expect(mocks.storage.unlinkDir).toHaveBeenCalledWith('/tmp/person-thumb', { recursive: true, force: true });
+    });
+
+    it('should clean up the temp dir when video frame extraction throws', async () => {
+      const person = PersonFactory.create();
+
+      mocks.person.getDataForThumbnailGenerationJob.mockResolvedValue(personThumbnailStub.videoFrameThumbnail);
+      mocks.storage.createTempDir.mockResolvedValue('/tmp/person-thumb');
+      mocks.media.extractVideoFrame.mockRejectedValue(new Error('ffmpeg failed'));
+
+      await expect(sut.handleGeneratePersonThumbnail({ id: person.id })).rejects.toThrow('ffmpeg failed');
+
+      expect(mocks.storage.unlinkDir).toHaveBeenCalledWith('/tmp/person-thumb', { recursive: true, force: true });
+    });
+
     it('should generate a thumbnail without going negative', async () => {
       const person = PersonFactory.create();
 

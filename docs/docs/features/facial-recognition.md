@@ -34,6 +34,14 @@ It can be found from the app bar when you access the detail view of a person.
 
 Face detection sends the generated preview image to the machine learning service for processing. The service checks if it has the relevant model downloaded and downloads it if not. The image is decoded, pre-processed and passed to the face detection model (with hardware acceleration if configured). The bounding boxes and scores outputted from this model are used to crop and preprocess the image once again to be passed to a facial recognition model (also accelerated if configured). The embeddings from the recognition model, together with the bounding boxes and scores from the face detection model, are then sent back to the server to be added to the database. The embeddings in particular are indexed so they can be searched quickly during facial recognition clustering.
 
+### Face detection in videos
+
+For video assets, Immich goes a step further: after the preview image is processed, it seeks through the video and samples individual frames at a configurable interval (default: one frame every 2 seconds, capped at 50 frames per video — when the cap is hit, samples are spread evenly across the full video). Frames are downscaled to preview size before detection. Each detected face is stored with a `timestampMs` value recording where in the video it appeared. Video face detection is opt-in: enable it with the **Video face detection** setting.
+
+Because many of these frames will show the same person from slightly different angles, a deduplication step runs before facial recognition. Faces from the same video — including the face found on the preview image — are clustered by embedding similarity (cosine distance); only the highest-quality representative from each cluster — chosen by largest normalised bounding-box area, a reliable proxy for face frontality — is kept, with the preview-derived face always preserved. The duplicates are discarded, and only the survivors are forwarded to the facial recognition pipeline.
+
+This means that a person who appears throughout a long video contributes exactly one face record to the recognition stage, rather than dozens of near-identical records that could skew clustering results.
+
 ## How Facial Recognition Works
 
 The facial recognition algorithm we use is derived from [DBSCAN](https://www.youtube.com/watch?v=RDZUdRSDOok), a popular clustering algorithm. It essentially treats each detected face as a point in a graph and aims to group points that are close to each other.
@@ -92,3 +100,17 @@ The distance threshold described in How Facial Recognition Works. The default wo
 The core point threshold described in How Facial Recognition Works. This setting has a few implications. First, it takes effect immediately in that people with fewer faces than this are hidden from view. Secondly, it makes clustering more robust as it prevents loosely-related faces from being linked to each other by requiring a certain level of density.
 
 Increasing this setting is a good idea if you increase the recognition distance or reduce the minimum detection score. Setting it to 1 effectively disables the concept of core points, but can be an option if you prefer a more hands-on approach.
+
+### Video face detection frame interval
+
+How many seconds apart sampled frames are when scanning a video for faces. The default is 2 seconds. Lowering this value increases the chance of catching a clear frontal shot of a person but also increases processing time and storage for intermediate face records. The allowed range is 1–300 seconds.
+
+After changing this setting you can re-run **Video Face Detection** from the Jobs page (or via the manual job trigger) to reprocess existing videos.
+
+### Video face detection max frames
+
+The maximum number of frames sampled per video, regardless of video length. The default is 50. This cap prevents very long videos from generating an excessive number of face records; when it applies, samples are spread evenly across the video. The allowed range is 1–500 frames.
+
+### Video face detection
+
+Whether faces are detected in sampled video frames at all. Disabled by default so that upgrading does not start reprocessing existing video libraries; when enabled, new videos are processed automatically and existing videos are picked up by the nightly maintenance sweep (or a manual run from the Jobs page).

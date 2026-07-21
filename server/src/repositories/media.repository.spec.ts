@@ -1,3 +1,5 @@
+import ffmpeg from 'fluent-ffmpeg';
+import fs from 'node:fs/promises';
 import sharp from 'sharp';
 import { AssetFace } from 'src/database';
 import { AssetEditAction, MirrorAxis } from 'src/dtos/editing.dto';
@@ -8,6 +10,12 @@ import { BoundingBox } from 'src/repositories/machine-learning.repository';
 import { MediaRepository } from 'src/repositories/media.repository';
 import { checkFaceVisibility, checkOcrVisibility } from 'src/utils/editor';
 import { automock } from 'test/utils';
+
+vi.mock('fluent-ffmpeg', () => {
+  const mockFn = vi.fn();
+  (mockFn as any).ffprobe = vi.fn();
+  return { default: mockFn };
+});
 
 const getPixelColor = async (buffer: Buffer, x: number, y: number) => {
   const metadata = await sharp(buffer).metadata();
@@ -59,6 +67,39 @@ const buildTestQuadImage = async () => {
   ]);
 
   return image.png().toBuffer();
+};
+
+const buildMockChain = (triggerEvent: 'end' | 'error' = 'end', stderrMsg = '') => {
+  const chain = {
+    seekInput: vi.fn(),
+    outputOptions: vi.fn(),
+    output: vi.fn(),
+    on: vi.fn(),
+    run: vi.fn(),
+  };
+  chain.seekInput.mockReturnValue(chain);
+  chain.outputOptions.mockReturnValue(chain);
+  chain.output.mockReturnValue(chain);
+  chain.on.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+    if (event === triggerEvent) {
+      if (event === 'end') {
+        setImmediate(() => cb());
+      } else {
+        setImmediate(() => cb(new Error('ffmpeg failed'), '', stderrMsg));
+      }
+    }
+    return chain;
+  });
+  return chain;
+};
+
+const mockProbe = (
+  duration?: number,
+  streams: any[] = [{ index: 0, codec_type: 'video', height: 1080, width: 1920 }],
+) => {
+  vi.mocked(ffmpeg.ffprobe).mockImplementation((_path: any, _opts: any, cb: any) =>
+    cb(null, { format: { duration }, streams }),
+  );
 };
 
 describe(MediaRepository.name, () => {
@@ -341,6 +382,7 @@ describe(MediaRepository.name, () => {
       updatedAt: new Date(),
       deletedAt: null,
       updateId: '',
+      timestampMs: null,
     };
 
     const assetDimensions = { width: 1000, height: 800 };
@@ -662,6 +704,142 @@ describe(MediaRepository.name, () => {
         expect(result.visible).toEqual([ocrInsideCrop]);
         expect(result.hidden).toEqual([ocrOutsideCrop]);
       });
+    });
+  });
+
+  describe('extractVideoFrames', () => {
+    const scaleOption = `-vf scale='min(1440,iw)':'min(1440,ih)':force_original_aspect_ratio=decrease`;
+
+    beforeEach(() => {
+      vi.mocked(ffmpeg).mockReturnValue(buildMockChain() as any);
+      vi.spyOn(fs, 'access').mockResolvedValue();
+      // Default: short video where naive count (floor(5/2)+1 = 3) does not exceed maxFrames (50)
+      mockProbe(5);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should seek once per interval and extract a downscaled single frame', async () => {
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(vi.mocked(ffmpeg)).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(ffmpeg)).toHaveBeenCalledWith('/video.mp4');
+      expect(mockChain.seekInput.mock.calls.map(([t]) => t)).toEqual([0, 2, 4]);
+      expect(mockChain.outputOptions).toHaveBeenCalledWith(['-frames:v 1', '-q:v 3', scaleOption]);
+      expect(mockChain.output).toHaveBeenCalledWith('/tmp/frames/frame_0001.jpg');
+      expect(result).toEqual([
+        { path: '/tmp/frames/frame_0001.jpg', timestampMs: 0 },
+        { path: '/tmp/frames/frame_0002.jpg', timestampMs: 2000 },
+        { path: '/tmp/frames/frame_0003.jpg', timestampMs: 4000 },
+      ]);
+    });
+
+    it('should spread frames evenly across the video when naive count exceeds maxFrames', async () => {
+      // 100s video at 2s interval = 51 frames > maxFrames 4 → interval 100/4 = 25s
+      mockProbe(100);
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 4, 1440);
+
+      expect(mockChain.seekInput.mock.calls.map(([t]) => t)).toEqual([0, 25, 50, 75]);
+      expect(result.map((frame) => frame.timestampMs)).toEqual([0, 25_000, 50_000, 75_000]);
+    });
+
+    it('should not seek at or past the end of the stream', async () => {
+      // 4s video at 2s interval — the naive third sample would land exactly at EOF
+      mockProbe(4);
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(mockChain.seekInput.mock.calls.map(([t]) => t)).toEqual([0, 2]);
+      expect(result.map((frame) => frame.timestampMs)).toEqual([0, 2000]);
+    });
+
+    it('should skip timestamps that do not produce a frame', async () => {
+      vi.spyOn(fs, 'access').mockImplementation((filePath) =>
+        String(filePath).endsWith('frame_0003.jpg') ? Promise.reject(new Error('ENOENT')) : Promise.resolve(),
+      );
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(result.map((frame) => frame.timestampMs)).toEqual([0, 2000]);
+    });
+
+    it('should return no frames for a file without a video stream', async () => {
+      mockProbe(60, [{ index: 0, codec_type: 'audio' }]);
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+
+      const result = await sut.extractVideoFrames('/audio.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(result).toEqual([]);
+      expect(mockChain.seekInput).not.toHaveBeenCalled();
+    });
+
+    it('should extract a single frame at the start when duration is unknown', async () => {
+      mockProbe();
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(mockChain.seekInput.mock.calls.map(([t]) => t)).toEqual([0]);
+      expect(result).toEqual([{ path: '/tmp/frames/frame_0001.jpg', timestampMs: 0 }]);
+    });
+
+    it('should reject with stderr when every extraction fails', async () => {
+      vi.mocked(ffmpeg).mockReturnValue(buildMockChain('error', 'invalid video stream') as any);
+
+      await expect(sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440)).rejects.toThrow(
+        'invalid video stream',
+      );
+    });
+
+    it('should tolerate partial extraction failures', async () => {
+      vi.mocked(ffmpeg)
+        .mockReturnValueOnce(buildMockChain('error', 'corrupt segment') as any)
+        .mockReturnValue(buildMockChain() as any);
+
+      const result = await sut.extractVideoFrames('/video.mp4', '/tmp/frames', 2, 50, 1440);
+
+      expect(result.map((frame) => frame.timestampMs)).toEqual([2000, 4000]);
+    });
+  });
+
+  describe('extractVideoFrame', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should seek to the timestamp and write a single downscaled frame', async () => {
+      const mockChain = buildMockChain();
+      vi.mocked(ffmpeg).mockReturnValue(mockChain as any);
+      vi.spyOn(fs, 'access').mockResolvedValue();
+
+      await expect(sut.extractVideoFrame('/video.mp4', '/tmp/frame.jpg', 8, 1440)).resolves.toBe(true);
+
+      expect(mockChain.seekInput).toHaveBeenCalledWith(8);
+      expect(mockChain.outputOptions).toHaveBeenCalledWith([
+        '-frames:v 1',
+        '-q:v 3',
+        `-vf scale='min(1440,iw)':'min(1440,ih)':force_original_aspect_ratio=decrease`,
+      ]);
+      expect(mockChain.output).toHaveBeenCalledWith('/tmp/frame.jpg');
+    });
+
+    it('should return false when no frame is produced', async () => {
+      vi.mocked(ffmpeg).mockReturnValue(buildMockChain() as any);
+      vi.spyOn(fs, 'access').mockRejectedValue(new Error('ENOENT'));
+
+      await expect(sut.extractVideoFrame('/video.mp4', '/tmp/frame.jpg', 8, 1440)).resolves.toBe(false);
     });
   });
 });

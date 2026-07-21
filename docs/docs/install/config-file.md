@@ -102,6 +102,9 @@ The default configuration looks like this:
     },
     "videoConversion": {
       "concurrency": 1
+    },
+    "videoFaceDetection": {
+      "concurrency": 2
     }
   },
   "library": {
@@ -137,7 +140,10 @@ The default configuration looks like this:
       "maxDistance": 0.5,
       "minFaces": 3,
       "minScore": 0.7,
-      "modelName": "buffalo_l"
+      "modelName": "buffalo_l",
+      "videoEnabled": false,
+      "videoFrameInterval": 2,
+      "videoMaxFrames": 50
     },
     "ocr": {
       "enabled": true,

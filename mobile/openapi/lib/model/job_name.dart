@@ -27,6 +27,9 @@ class JobName {
   static const assetDeleteCheck = JobName._(r'AssetDeleteCheck');
   static const assetDetectFacesQueueAll = JobName._(r'AssetDetectFacesQueueAll');
   static const assetDetectFaces = JobName._(r'AssetDetectFaces');
+  static const assetVideoDetectFacesQueueAll = JobName._(r'AssetVideoDetectFacesQueueAll');
+  static const assetVideoDetectFaces = JobName._(r'AssetVideoDetectFaces');
+  static const assetVideoClusterFaces = JobName._(r'AssetVideoClusterFaces');
   static const assetDetectDuplicatesQueueAll = JobName._(r'AssetDetectDuplicatesQueueAll');
   static const assetDetectDuplicates = JobName._(r'AssetDetectDuplicates');
   static const assetEditThumbnailGeneration = JobName._(r'AssetEditThumbnailGeneration');
@@ -96,6 +99,9 @@ class JobName {
     assetDeleteCheck,
     assetDetectFacesQueueAll,
     assetDetectFaces,
+    assetVideoDetectFacesQueueAll,
+    assetVideoDetectFaces,
+    assetVideoClusterFaces,
     assetDetectDuplicatesQueueAll,
     assetDetectDuplicates,
     assetEditThumbnailGeneration,
@@ -200,6 +206,9 @@ class JobNameTypeTransformer {
         case r'AssetDeleteCheck': return JobName.assetDeleteCheck;
         case r'AssetDetectFacesQueueAll': return JobName.assetDetectFacesQueueAll;
         case r'AssetDetectFaces': return JobName.assetDetectFaces;
+        case r'AssetVideoDetectFacesQueueAll': return JobName.assetVideoDetectFacesQueueAll;
+        case r'AssetVideoDetectFaces': return JobName.assetVideoDetectFaces;
+        case r'AssetVideoClusterFaces': return JobName.assetVideoClusterFaces;
         case r'AssetDetectDuplicatesQueueAll': return JobName.assetDetectDuplicatesQueueAll;
         case r'AssetDetectDuplicates': return JobName.assetDetectDuplicates;
         case r'AssetEditThumbnailGeneration': return JobName.assetEditThumbnailGeneration;

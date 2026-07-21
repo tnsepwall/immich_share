@@ -38,7 +38,11 @@ class AsyncCache<K, V> {
 class AssetCacheManager {
   #assetCache = new AsyncCache(getAssetInfo);
   #ocrCache = new AsyncCache(getAssetOcr);
-  #faceCache = new AsyncCache(getFaces);
+  // Faces sampled from video frames (timestampMs set) have bounding boxes that only make sense on
+  // the frame they came from, not on the preview image the viewer displays, so they are not shown.
+  #faceCache = new AsyncCache((dto: { id: string }) =>
+    getFaces(dto).then((faces) => faces.filter((face) => face.timestampMs === undefined)),
+  );
 
   constructor() {
     eventManager.on({

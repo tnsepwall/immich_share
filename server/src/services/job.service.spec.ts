@@ -1,4 +1,4 @@
-import { AssetType, ImmichWorker, JobName, JobStatus, QueueName } from 'src/enum';
+import { AssetType, ImmichWorker, JobName, JobStatus, ManualJobName, QueueName } from 'src/enum';
 import { JobService } from 'src/services/job.service';
 import { JobItem } from 'src/types';
 import { AssetFactory } from 'test/factories/asset.factory';
@@ -17,6 +17,16 @@ describe(JobService.name, () => {
 
   it('should work', () => {
     expect(sut).toBeDefined();
+  });
+
+  describe('create', () => {
+    it('should queue AssetVideoDetectFacesQueueAll for VideoFaceDetection manual job', async () => {
+      await sut.create({ name: ManualJobName.VideoFaceDetection });
+      expect(mocks.job.queue).toHaveBeenCalledWith({
+        name: JobName.AssetVideoDetectFacesQueueAll,
+        data: { force: true },
+      });
+    });
   });
 
   describe('onJobRun', () => {

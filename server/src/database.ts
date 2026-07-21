@@ -295,6 +295,7 @@ export type AssetFace = {
   updatedAt: Date;
   updateId: string;
   isVisible: boolean;
+  timestampMs: number | null;
 };
 
 export type Plugin = Selectable<PluginTable>;

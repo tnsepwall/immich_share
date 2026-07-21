@@ -22,6 +22,7 @@ class AssetFaceResponseDto {
     required this.imageWidth,
     required this.person,
     this.sourceType = const Optional.absent(),
+    this.timestampMs = const Optional.absent(),
   });
 
   /// Bounding box X1 coordinate
@@ -73,6 +74,18 @@ class AssetFaceResponseDto {
   ///
   Optional<SourceType?> sourceType;
 
+  /// Milliseconds from video start; absent for photos
+  ///
+  /// Minimum value: 0
+  /// Maximum value: 9007199254740991
+  ///
+  /// Please note: This property should have been non-nullable! Since the specification file
+  /// does not include a default value (using the "default:" property), however, the generated
+  /// source code must fall back to having a nullable type.
+  /// Consider adding a "default:" property in the specification file to hide this note.
+  ///
+  Optional<int?> timestampMs;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is AssetFaceResponseDto &&
     other.boundingBoxX1 == boundingBoxX1 &&
@@ -83,7 +96,8 @@ class AssetFaceResponseDto {
     other.imageHeight == imageHeight &&
     other.imageWidth == imageWidth &&
     other.person == person &&
-    other.sourceType == sourceType;
+    other.sourceType == sourceType &&
+    other.timestampMs == timestampMs;
 
   @override
   int get hashCode =>
@@ -96,10 +110,11 @@ class AssetFaceResponseDto {
     (imageHeight.hashCode) +
     (imageWidth.hashCode) +
     (person == null ? 0 : person!.hashCode) +
-    (sourceType == null ? 0 : sourceType!.hashCode);
+    (sourceType == null ? 0 : sourceType!.hashCode) +
+    (timestampMs == null ? 0 : timestampMs!.hashCode);
 
   @override
-  String toString() => 'AssetFaceResponseDto[boundingBoxX1=$boundingBoxX1, boundingBoxX2=$boundingBoxX2, boundingBoxY1=$boundingBoxY1, boundingBoxY2=$boundingBoxY2, id=$id, imageHeight=$imageHeight, imageWidth=$imageWidth, person=$person, sourceType=$sourceType]';
+  String toString() => 'AssetFaceResponseDto[boundingBoxX1=$boundingBoxX1, boundingBoxX2=$boundingBoxX2, boundingBoxY1=$boundingBoxY1, boundingBoxY2=$boundingBoxY2, id=$id, imageHeight=$imageHeight, imageWidth=$imageWidth, person=$person, sourceType=$sourceType, timestampMs=$timestampMs]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -118,6 +133,10 @@ class AssetFaceResponseDto {
     if (this.sourceType.isPresent) {
       final value = this.sourceType.value;
       json[r'sourceType'] = value;
+    }
+    if (this.timestampMs.isPresent) {
+      final value = this.timestampMs.value;
+      json[r'timestampMs'] = value;
     }
     return json;
   }
@@ -140,6 +159,7 @@ class AssetFaceResponseDto {
         imageWidth: mapValueOfType<int>(json, r'imageWidth')!,
         person: PersonResponseDto.fromJson(json[r'person']),
         sourceType: json.containsKey(r'sourceType') ? Optional.present(SourceType.fromJson(json[r'sourceType'])) : const Optional.absent(),
+        timestampMs: json.containsKey(r'timestampMs') ? Optional.present(json[r'timestampMs'] == null ? null : int.parse('${json[r'timestampMs']}')) : const Optional.absent(),
       );
     }
     return null;

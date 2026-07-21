@@ -26,16 +26,20 @@ To enhance face clustering and ensure the model effectively identifies faces usi
 
 #### 1. Adjust Machine Learning Settings
 
-Navigate to:  
+Navigate to:
 **Admin → Administration → Settings → Machine Learning Settings**
 
 Make the following changes:
 
-- **Maximum recognition distance (Optional):**  
+- **Maximum recognition distance (Optional):**
   Lower this value, e.g., to **0.4**, if the library contains people with similar facial features.
-- **Minimum recognized faces:**  
+- **Minimum recognized faces:**
   Set this to a **high value** (e.g., 20 For libraries with a large amount of assets (~100K+), and 10 for libraries with medium amount of assets (~40K+)).
   > A high value ensures clusters only include faces that appear at least 20/`value` times in the library, improving the initial clustering process.
+
+:::tip Video libraries
+If your library contains many videos, face detection samples frames throughout each video (default: one frame every 2 seconds, up to 50 frames). Running **Video Face Detection** (Administration → Jobs) after adjusting the settings above can significantly improve clustering for video-heavy libraries. You can tune **Video face detection frame interval** and **Video face detection max frames** in the Facial Recognition settings to balance thoroughness against processing time.
+:::
 
 ---
 

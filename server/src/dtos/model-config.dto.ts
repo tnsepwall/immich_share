@@ -36,6 +36,9 @@ export const FacialRecognitionConfigSchema = ModelConfigSchema.extend({
     .max(2)
     .describe('Maximum distance threshold for face recognition'),
   minFaces: z.int().min(1).describe('Minimum number of faces required for recognition'),
+  videoEnabled: z.boolean().describe('Whether to detect faces in sampled video frames'),
+  videoFrameInterval: z.int().min(1).max(300).describe('Seconds between sampled frames when detecting faces in videos'),
+  videoMaxFrames: z.int().min(1).max(500).describe('Maximum number of frames to sample per video for face detection'),
 }).meta({ id: 'FacialRecognitionConfig' });
 
 export const OcrConfigSchema = ModelConfigSchema.extend({

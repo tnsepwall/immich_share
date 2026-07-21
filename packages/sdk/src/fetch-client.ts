@@ -1177,6 +1177,8 @@ export type AssetFaceResponseDto = {
     imageWidth: number;
     person: (PersonResponseDto) | null;
     sourceType?: SourceType;
+    /** Milliseconds from video start; absent for photos */
+    timestampMs?: number;
 };
 export type AssetFaceCreateDto = {
     /** Asset ID */
@@ -1247,6 +1249,7 @@ export type QueuesResponseLegacyDto = {
     storageTemplateMigration: QueueResponseLegacyDto;
     thumbnailGeneration: QueueResponseLegacyDto;
     videoConversion: QueueResponseLegacyDto;
+    videoFaceDetection: QueueResponseLegacyDto;
     workflow: QueueResponseLegacyDto;
 };
 export type JobCreateDto = {
@@ -2214,6 +2217,8 @@ export type ServerFeaturesDto = {
     smartSearch: boolean;
     /** Whether trash feature is enabled */
     trash: boolean;
+    /** Whether video face detection is enabled */
+    videoFaceDetection: boolean;
 };
 export type LicenseKeyDto = {
     /** Activation key */
@@ -2575,6 +2580,7 @@ export type SystemConfigJobDto = {
     smartSearch: JobSettingsDto;
     thumbnailGeneration: JobSettingsDto;
     videoConversion: JobSettingsDto;
+    videoFaceDetection: JobSettingsDto;
     workflow: JobSettingsDto;
 };
 export type SystemConfigLibraryScanDto = {
@@ -2625,6 +2631,12 @@ export type FacialRecognitionConfig = {
     minScore: number;
     /** Name of the model to use */
     modelName: string;
+    /** Whether to detect faces in sampled video frames */
+    videoEnabled: boolean;
+    /** Seconds between sampled frames when detecting faces in videos */
+    videoFrameInterval: number;
+    /** Maximum number of frames to sample per video for face detection */
+    videoMaxFrames: number;
 };
 export type OcrConfig = {
     /** Whether the task is enabled */
@@ -7771,13 +7783,15 @@ export enum ManualJobName {
     IntegrityChecksumMismatchRefresh = "integrity-checksum-mismatch-refresh",
     IntegrityMissingFilesDeleteAll = "integrity-missing-files-delete-all",
     IntegrityUntrackedFilesDeleteAll = "integrity-untracked-files-delete-all",
-    IntegrityChecksumMismatchDeleteAll = "integrity-checksum-mismatch-delete-all"
+    IntegrityChecksumMismatchDeleteAll = "integrity-checksum-mismatch-delete-all",
+    VideoFaceDetection = "video-face-detection"
 }
 export enum QueueName {
     ThumbnailGeneration = "thumbnailGeneration",
     MetadataExtraction = "metadataExtraction",
     VideoConversion = "videoConversion",
     FaceDetection = "faceDetection",
+    VideoFaceDetection = "videoFaceDetection",
     FacialRecognition = "facialRecognition",
     SmartSearch = "smartSearch",
     DuplicateDetection = "duplicateDetection",
@@ -7837,6 +7851,9 @@ export enum JobName {
     AssetDeleteCheck = "AssetDeleteCheck",
     AssetDetectFacesQueueAll = "AssetDetectFacesQueueAll",
     AssetDetectFaces = "AssetDetectFaces",
+    AssetVideoDetectFacesQueueAll = "AssetVideoDetectFacesQueueAll",
+    AssetVideoDetectFaces = "AssetVideoDetectFaces",
+    AssetVideoClusterFaces = "AssetVideoClusterFaces",
     AssetDetectDuplicatesQueueAll = "AssetDetectDuplicatesQueueAll",
     AssetDetectDuplicates = "AssetDetectDuplicates",
     AssetEditThumbnailGeneration = "AssetEditThumbnailGeneration",

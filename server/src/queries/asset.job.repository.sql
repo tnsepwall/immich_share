@@ -456,6 +456,7 @@ where
 -- AssetJobRepository.getForDetectFacesJob
 select
   "asset"."id",
+  "asset"."type",
   "asset"."visibility",
   to_json("asset_exif") as "exifInfo",
   (
@@ -493,6 +494,39 @@ from
   inner join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."id" = $2
+
+-- AssetJobRepository.getForVideoDetectFacesJob
+select
+  "asset"."id",
+  "asset"."originalPath",
+  "asset"."visibility"
+from
+  "asset"
+where
+  "asset"."id" = $1
+  and "asset"."type" = 'VIDEO'
+
+-- AssetJobRepository.streamForVideoDetectFacesJob
+select
+  "asset"."id"
+from
+  "asset"
+  inner join "asset_job_status" as "job_status" on "assetId" = "asset"."id"
+where
+  "asset"."visibility" != $1
+  and "asset"."deletedAt" is null
+  and exists (
+    select
+    from
+      "asset_file"
+    where
+      "assetId" = "asset"."id"
+      and "asset_file"."type" = $2
+  )
+  and "asset"."type" = 'VIDEO'
+  and "job_status"."videoFacesRecognizedAt" is null
+order by
+  "asset"."fileCreatedAt" desc
 
 -- AssetJobRepository.getForOcr
 select

@@ -71,4 +71,12 @@ graph TD
     D --> H[Video Transcoding]
     E --> I[Duplicate Detection]
     F --> J[Facial Recognition]
+    F --> K{Video asset?}
+    K -->|Yes| L[Video Face Detection]
+    L --> M[Video Face Clustering]
+    M --> J
 ```
+
+:::note
+Video Face Detection samples frames throughout the full video and records the timestamp of each detected face. Video Face Clustering then deduplicates faces from the same video before they reach the Facial Recognition stage. You can trigger Video Face Detection manually from Administration → Jobs or via **Administration → Create Job → Video face detection**.
+:::

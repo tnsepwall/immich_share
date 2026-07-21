@@ -5,6 +5,7 @@ import _ from 'lodash';
 import { Duration } from 'luxon';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Writable } from 'node:stream';
 import sharp from 'sharp';
 import { ORIENTATION_TO_SHARP_ROTATION } from 'src/constants';
@@ -370,6 +371,106 @@ export class MediaRepository {
         });
       });
     });
+  }
+
+  /**
+   * Samples frames from a video at a regular interval and writes them as JPEG files.
+   *
+   * Each frame is extracted with its own input-seek (`-ss` before `-i`), which seeks to the
+   * nearest keyframe and decodes only forward from there — far cheaper than decoding the whole
+   * video, which is what an `fps=1/N` filter would require. If the requested interval would
+   * yield more frames than maxFrames allows, the interval is widened to duration / maxFrames so
+   * that samples stay evenly spread across the full video.
+   *
+   * Frames are downscaled so their long edge is at most previewSize (what face detection sees
+   * for photos); smaller frames are never upscaled.
+   *
+   * @param videoPath absolute path to the source video
+   * @param outputDir directory to write the extracted JPEGs into; must exist before calling
+   * @param frameInterval requested seconds between consecutive sampled frames
+   * @param maxFrames maximum number of frames to extract, regardless of video length
+   * @param previewSize maximum long-edge size of the extracted frames, in pixels
+   * @returns the extracted frames with the exact timestamp each was sampled at
+   */
+  async extractVideoFrames(
+    videoPath: string,
+    outputDir: string,
+    frameInterval: number,
+    maxFrames: number,
+    previewSize: number,
+  ): Promise<{ path: string; timestampMs: number }[]> {
+    const { format, videoStreams } = await this.probe(videoPath);
+    if (videoStreams.length === 0) {
+      // e.g. an audio file with a video container/mimetype — nothing to extract
+      return [];
+    }
+    const duration = format.duration ?? 0;
+
+    let timestamps: number[];
+    if (duration <= 0) {
+      // Duration can be missing for some containers; still try the first frame.
+      timestamps = [0];
+    } else {
+      const naiveCount = Math.floor(duration / frameInterval) + 1;
+      const count = Math.min(naiveCount, maxFrames);
+      const interval = naiveCount > maxFrames ? duration / maxFrames : frameInterval;
+      // A seek at or past the end of the stream can never produce a frame, so don't attempt it.
+      timestamps = Array.from({ length: count }, (_, i) => i * interval).filter((timestamp) => timestamp < duration);
+    }
+
+    const frames: { path: string; timestampMs: number }[] = [];
+    let lastError: Error | undefined;
+    for (const [index, timestamp] of timestamps.entries()) {
+      const framePath = path.join(outputDir, `frame_${String(index + 1).padStart(4, '0')}.jpg`);
+      try {
+        if (await this.extractVideoFrame(videoPath, framePath, timestamp, previewSize)) {
+          frames.push({ path: framePath, timestampMs: Math.round(timestamp * 1000) });
+        }
+      } catch (error: Error | any) {
+        lastError = error;
+      }
+    }
+
+    if (frames.length === 0 && lastError) {
+      throw lastError;
+    }
+
+    return frames;
+  }
+
+  /**
+   * Extracts the single frame at the given timestamp, downscaled to the preview long edge
+   * (matching the frames face detection ran on; crop math scales stored to actual dimensions).
+   *
+   * @returns true when a frame was written; false when the seek produced no frame (e.g. at EOF)
+   */
+  async extractVideoFrame(
+    videoPath: string,
+    outputPath: string,
+    timestampSeconds: number,
+    previewSize: number,
+  ): Promise<boolean> {
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(videoPath)
+        .seekInput(timestampSeconds)
+        .outputOptions([
+          '-frames:v 1',
+          '-q:v 3',
+          `-vf scale='min(${previewSize},iw)':'min(${previewSize},ih)':force_original_aspect_ratio=decrease`,
+        ])
+        .output(outputPath)
+        .on('error', (error: Error, _stdout: string | null, stderr: string | null) =>
+          reject(new Error(stderr || error.message)),
+        )
+        .on('end', () => resolve())
+        .run();
+    });
+
+    // A seek at or past the end of the stream can succeed without producing a frame.
+    return fs.access(outputPath).then(
+      () => true,
+      () => false,
+    );
   }
 
   transcode(input: string, output: string | Writable, options: TranscodeCommand): Promise<void> {

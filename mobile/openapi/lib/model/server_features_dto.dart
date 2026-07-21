@@ -29,6 +29,7 @@ class ServerFeaturesDto {
     required this.sidecar,
     required this.smartSearch,
     required this.trash,
+    required this.videoFaceDetection,
   });
 
   /// Whether config file is available
@@ -79,6 +80,9 @@ class ServerFeaturesDto {
   /// Whether trash feature is enabled
   bool trash;
 
+  /// Whether video face detection is enabled
+  bool videoFaceDetection;
+
   @override
   bool operator ==(Object other) => identical(this, other) || other is ServerFeaturesDto &&
     other.configFile == configFile &&
@@ -96,7 +100,8 @@ class ServerFeaturesDto {
     other.search == search &&
     other.sidecar == sidecar &&
     other.smartSearch == smartSearch &&
-    other.trash == trash;
+    other.trash == trash &&
+    other.videoFaceDetection == videoFaceDetection;
 
   @override
   int get hashCode =>
@@ -116,10 +121,11 @@ class ServerFeaturesDto {
     (search.hashCode) +
     (sidecar.hashCode) +
     (smartSearch.hashCode) +
-    (trash.hashCode);
+    (trash.hashCode) +
+    (videoFaceDetection.hashCode);
 
   @override
-  String toString() => 'ServerFeaturesDto[configFile=$configFile, duplicateDetection=$duplicateDetection, email=$email, facialRecognition=$facialRecognition, importFaces=$importFaces, map=$map, oauth=$oauth, oauthAutoLaunch=$oauthAutoLaunch, ocr=$ocr, passwordLogin=$passwordLogin, realtimeTranscoding=$realtimeTranscoding, reverseGeocoding=$reverseGeocoding, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, trash=$trash]';
+  String toString() => 'ServerFeaturesDto[configFile=$configFile, duplicateDetection=$duplicateDetection, email=$email, facialRecognition=$facialRecognition, importFaces=$importFaces, map=$map, oauth=$oauth, oauthAutoLaunch=$oauthAutoLaunch, ocr=$ocr, passwordLogin=$passwordLogin, realtimeTranscoding=$realtimeTranscoding, reverseGeocoding=$reverseGeocoding, search=$search, sidecar=$sidecar, smartSearch=$smartSearch, trash=$trash, videoFaceDetection=$videoFaceDetection]';
 
   Map<String, dynamic> toJson() {
     final json = <String, dynamic>{};
@@ -139,6 +145,7 @@ class ServerFeaturesDto {
       json[r'sidecar'] = this.sidecar;
       json[r'smartSearch'] = this.smartSearch;
       json[r'trash'] = this.trash;
+      json[r'videoFaceDetection'] = this.videoFaceDetection;
     return json;
   }
 
@@ -167,6 +174,7 @@ class ServerFeaturesDto {
         sidecar: mapValueOfType<bool>(json, r'sidecar')!,
         smartSearch: mapValueOfType<bool>(json, r'smartSearch')!,
         trash: mapValueOfType<bool>(json, r'trash')!,
+        videoFaceDetection: mapValueOfType<bool>(json, r'videoFaceDetection')!,
       );
     }
     return null;
@@ -230,6 +238,7 @@ class ServerFeaturesDto {
     'sidecar',
     'smartSearch',
     'trash',
+    'videoFaceDetection',
   };
 }
 

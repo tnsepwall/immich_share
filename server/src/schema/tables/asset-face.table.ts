@@ -86,4 +86,7 @@ export class AssetFaceTable {
 
   @Column({ type: 'boolean', default: true })
   isVisible!: Generated<boolean>;
+
+  @Column({ type: 'integer', nullable: true })
+  timestampMs!: number | null;
 }

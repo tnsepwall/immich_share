@@ -418,51 +418,76 @@ export class MediaService extends BaseService {
     }
 
     const { ownerId, x1, y1, x2, y2, oldWidth, oldHeight, exifOrientation, previewPath, originalPath } = data;
-    let inputImage: string | Buffer;
-    if (data.type === AssetType.Video) {
-      if (!previewPath) {
-        this.logger.error(`Could not generate person thumbnail for video ${id}: missing preview path`);
-        return JobStatus.Failed;
+    let tempDir: string | undefined;
+    try {
+      let inputImage: string | Buffer;
+      if (data.type === AssetType.Video && data.timestampMs !== null) {
+        // The face was detected on a sampled video frame; its bounding box only makes sense on that
+        // frame, so re-extract it rather than cropping the (different) preview image.
+        tempDir = await this.storageRepository.createTempDir('immich-person-thumbnail-');
+        const framePath = `${tempDir}/frame.jpg`;
+        if (
+          await this.mediaRepository.extractVideoFrame(
+            originalPath,
+            framePath,
+            data.timestampMs / 1000,
+            image.preview.size,
+          )
+        ) {
+          inputImage = framePath;
+        } else {
+          this.logger.error(`Could not generate person thumbnail for ${id}: no frame at ${data.timestampMs}ms`);
+          return JobStatus.Failed;
+        }
+      } else if (data.type === AssetType.Video) {
+        if (!previewPath) {
+          this.logger.error(`Could not generate person thumbnail for video ${id}: missing preview path`);
+          return JobStatus.Failed;
+        }
+        inputImage = previewPath;
+      } else if (image.extractEmbedded && mimeTypes.isRaw(originalPath)) {
+        const extracted = await this.extractImage(originalPath, image.preview.size);
+        inputImage = extracted ? extracted.buffer : originalPath;
+      } else {
+        inputImage = originalPath;
       }
-      inputImage = previewPath;
-    } else if (image.extractEmbedded && mimeTypes.isRaw(originalPath)) {
-      const extracted = await this.extractImage(originalPath, image.preview.size);
-      inputImage = extracted ? extracted.buffer : originalPath;
-    } else {
-      inputImage = originalPath;
+
+      const { data: decodedImage, info } = await this.mediaRepository.decodeImage(inputImage, {
+        colorspace: image.colorspace,
+        processInvalidImages: process.env.IMMICH_PROCESS_INVALID_IMAGES === 'true',
+        // if this is an extracted image, it may not have orientation metadata
+        orientation: Buffer.isBuffer(inputImage) && exifOrientation ? Number(exifOrientation) : undefined,
+      });
+
+      const thumbnailPath = StorageCore.getPersonThumbnailPath({ id, ownerId });
+      this.storageCore.ensureFolders(thumbnailPath);
+
+      const thumbnailOptions: GenerateThumbnailOptions = {
+        colorspace: image.colorspace,
+        format: ImageFormat.Jpeg,
+        raw: info,
+        quality: image.thumbnail.quality,
+        progressive: false,
+        processInvalidImages: false,
+        size: FACE_THUMBNAIL_SIZE,
+        edits: [
+          {
+            action: AssetEditAction.Crop,
+            parameters: this.getCrop(
+              { old: { width: oldWidth, height: oldHeight }, new: { width: info.width, height: info.height } },
+              { x1, y1, x2, y2 },
+            ),
+          },
+        ],
+      };
+
+      await this.mediaRepository.generateThumbnail(decodedImage, thumbnailOptions, thumbnailPath);
+      await this.personRepository.update({ id, thumbnailPath });
+    } finally {
+      if (tempDir) {
+        await this.storageRepository.unlinkDir(tempDir, { recursive: true, force: true });
+      }
     }
-
-    const { data: decodedImage, info } = await this.mediaRepository.decodeImage(inputImage, {
-      colorspace: image.colorspace,
-      processInvalidImages: process.env.IMMICH_PROCESS_INVALID_IMAGES === 'true',
-      // if this is an extracted image, it may not have orientation metadata
-      orientation: Buffer.isBuffer(inputImage) && exifOrientation ? Number(exifOrientation) : undefined,
-    });
-
-    const thumbnailPath = StorageCore.getPersonThumbnailPath({ id, ownerId });
-    this.storageCore.ensureFolders(thumbnailPath);
-
-    const thumbnailOptions: GenerateThumbnailOptions = {
-      colorspace: image.colorspace,
-      format: ImageFormat.Jpeg,
-      raw: info,
-      quality: image.thumbnail.quality,
-      progressive: false,
-      processInvalidImages: false,
-      size: FACE_THUMBNAIL_SIZE,
-      edits: [
-        {
-          action: AssetEditAction.Crop,
-          parameters: this.getCrop(
-            { old: { width: oldWidth, height: oldHeight }, new: { width: info.width, height: info.height } },
-            { x1, y1, x2, y2 },
-          ),
-        },
-      ],
-    };
-
-    await this.mediaRepository.generateThumbnail(decodedImage, thumbnailOptions, thumbnailPath);
-    await this.personRepository.update({ id, thumbnailPath });
 
     return JobStatus.Success;
   }

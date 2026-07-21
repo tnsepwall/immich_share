@@ -131,6 +131,9 @@ Editable settings:
 - **Min Detection Score**
 - **Max Recognition Distance**
 - **Min Recognized Faces**
+- **Video face detection** — whether to detect faces in frames sampled from videos (default off)
+- **Video face detection frame interval** — seconds between sampled frames when scanning a video for faces (1–300, default 2)
+- **Video face detection max frames** — maximum frames sampled per video regardless of length (1–500, default 50)
 
 You can learn more about these options on the [Facial Recognition page](/features/facial-recognition#how-face-detection-works)
 

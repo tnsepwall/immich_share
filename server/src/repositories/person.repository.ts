@@ -320,7 +320,63 @@ export class PersonRepository {
   }
 
   async deleteFaces({ sourceType }: DeleteFacesOptions): Promise<void> {
-    await this.db.deleteFrom('asset_face').where('asset_face.sourceType', '=', sourceType).execute();
+    // Video-frame faces (timestampMs set) are owned by the video face detection pipeline, which
+    // resets them itself; the (photo) face detection reset must not silently discard them.
+    await this.db
+      .deleteFrom('asset_face')
+      .where('asset_face.sourceType', '=', sourceType)
+      .where('asset_face.timestampMs', 'is', null)
+      .execute();
+  }
+
+  // All machine-learning faces for an asset (the thumbnail-derived face with a null timestampMs
+  // plus every sampled video-frame face), so clustering can deduplicate video faces against the
+  // pre-existing single-frame face rather than leaving a near-duplicate behind.
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getVideoFacesWithEmbeddings(assetId: string) {
+    return (
+      this.db
+        .selectFrom('asset_face')
+        .innerJoin('face_search', 'face_search.faceId', 'asset_face.id')
+        .select([
+          'asset_face.id',
+          'asset_face.imageWidth',
+          'asset_face.imageHeight',
+          'asset_face.boundingBoxX1',
+          'asset_face.boundingBoxY1',
+          'asset_face.boundingBoxX2',
+          'asset_face.boundingBoxY2',
+          'asset_face.timestampMs',
+          'face_search.embedding',
+        ])
+        .where('asset_face.assetId', '=', assetId)
+        .where('asset_face.sourceType', '=', SourceType.MachineLearning)
+        .where('asset_face.deletedAt', 'is', null)
+        // stable ordering so equal-area cluster ties resolve the same way on every run
+        .orderBy('asset_face.id')
+        .execute()
+    );
+  }
+
+  // People whose feature photo is anchored to one of the given faces; deleting those faces would
+  // null person.faceAssetId (FK is SET NULL), so callers must re-pick a feature photo afterwards.
+  @GenerateSql({ params: [[DummyValue.UUID]] })
+  getPersonIdsByFaceAssetIds(faceIds: string[]) {
+    return this.db.selectFrom('person').select(['person.id']).where('person.faceAssetId', 'in', faceIds).execute();
+  }
+
+  // Video-frame faces only (timestampMs set), used to clear a prior run before re-detecting so
+  // repeated video face detection replaces rather than appends.
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getVideoFaceIds(assetId: string) {
+    return this.db
+      .selectFrom('asset_face')
+      .select(['asset_face.id'])
+      .where('asset_face.assetId', '=', assetId)
+      .where('asset_face.timestampMs', 'is not', null)
+      .where('asset_face.sourceType', '=', SourceType.MachineLearning)
+      .where('asset_face.deletedAt', 'is', null)
+      .execute();
   }
 
   getAllFaces(options: GetAllFacesOptions = {}) {
@@ -652,6 +708,9 @@ export class PersonRepository {
       .where('asset_face.assetId', '=', assetId)
       .where('asset_face.deletedAt', 'is', null)
       .where('asset_face.isVisible', '=', true)
+      // Video-frame faces (timestampMs set) have bounding boxes relative to a sampled frame, not the
+      // preview the web renders, so they are excluded here just like the owner-side face panels do.
+      .where('asset_face.timestampMs', 'is', null)
       .orderBy('asset_face.boundingBoxX1', 'asc')
       .execute();
   }
@@ -857,6 +916,7 @@ export class PersonRepository {
         'asset_face.boundingBoxY2 as y2',
         'asset_face.imageWidth as oldWidth',
         'asset_face.imageHeight as oldHeight',
+        'asset_face.timestampMs',
         'asset.type',
         'asset.originalPath',
         'asset_exif.orientation as exifOrientation',

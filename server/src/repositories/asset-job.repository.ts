@@ -245,12 +245,32 @@ export class AssetJobRepository {
   getForDetectFacesJob(id: string) {
     return this.db
       .selectFrom('asset')
-      .select(['asset.id', 'asset.visibility'])
+      .select(['asset.id', 'asset.type', 'asset.visibility'])
       .$call(withExifInner)
       .select((eb) => withFaces(eb, true, true))
       .select((eb) => withFiles(eb, AssetFileType.Preview))
       .where('asset.id', '=', id)
       .executeTakeFirst();
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID] })
+  getForVideoDetectFacesJob(id: string) {
+    return this.db
+      .selectFrom('asset')
+      .select(['asset.id', 'asset.originalPath', 'asset.visibility'])
+      .where('asset.id', '=', id)
+      .where('asset.type', '=', sql.lit(AssetType.Video))
+      .executeTakeFirst();
+  }
+
+  @GenerateSql({ params: [], stream: true })
+  streamForVideoDetectFacesJob(force?: boolean) {
+    return this.assetsWithPreviews()
+      .select(['asset.id'])
+      .where('asset.type', '=', sql.lit(AssetType.Video))
+      .$if(!force, (qb) => qb.where('job_status.videoFacesRecognizedAt', 'is', null))
+      .orderBy('asset.fileCreatedAt', 'desc')
+      .stream();
   }
 
   @GenerateSql({ params: [DummyValue.UUID] })

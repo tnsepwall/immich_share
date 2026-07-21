@@ -234,6 +234,10 @@ export class QueueService extends BaseService {
         return this.jobRepository.queue({ name: JobName.AssetDetectFacesQueueAll, data: { force } });
       }
 
+      case QueueName.VideoFaceDetection: {
+        return this.jobRepository.queue({ name: JobName.AssetVideoDetectFacesQueueAll, data: { force } });
+      }
+
       case QueueName.FacialRecognition: {
         return this.jobRepository.queue({ name: JobName.FacialRecognitionQueueAll, data: { force } });
       }
@@ -294,7 +298,11 @@ export class QueueService extends BaseService {
     }
 
     if (config.nightlyTasks.clusterNewFaces) {
-      jobs.push({ name: JobName.FacialRecognitionQueueAll, data: { force: false, nightly: true } });
+      // Sweep up videos whose face detection never completed (e.g. a crash mid-job) before clustering.
+      jobs.push(
+        { name: JobName.AssetVideoDetectFacesQueueAll, data: { force: false } },
+        { name: JobName.FacialRecognitionQueueAll, data: { force: false, nightly: true } },
+      );
     }
 
     await this.jobRepository.queueAll(jobs);

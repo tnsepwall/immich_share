@@ -93,6 +93,7 @@ export class ServerService extends BaseService {
     return {
       smartSearch: isSmartSearchEnabled(machineLearning),
       facialRecognition: isFacialRecognitionEnabled(machineLearning),
+      videoFaceDetection: isFacialRecognitionEnabled(machineLearning) && machineLearning.facialRecognition.videoEnabled,
       duplicateDetection: isDuplicateDetectionEnabled(machineLearning),
       map: map.enabled,
       reverseGeocoding: reverseGeocoding.enabled,

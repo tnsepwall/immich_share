@@ -65,6 +65,11 @@
       missingText: $t('missing'),
       disabled: !featureFlags.facialRecognition,
     },
+    [QueueName.VideoFaceDetection]: {
+      allText: $t('all'),
+      missingText: $t('missing'),
+      disabled: !featureFlags.videoFaceDetection,
+    },
     [QueueName.FacialRecognition]: {
       allText: $t('reset'),
       missingText: $t('missing'),
@@ -95,6 +100,7 @@
 
     switch (name) {
       case QueueName.FaceDetection:
+      case QueueName.VideoFaceDetection:
       case QueueName.FacialRecognition: {
         if (dto.force) {
           const confirmed = await modalManager.showDialog({ prompt: $t('admin.confirm_reprocess_all_faces') });

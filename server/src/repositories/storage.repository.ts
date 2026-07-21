@@ -13,6 +13,7 @@ import {
   watch,
 } from 'node:fs';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { createGunzip, createGzip } from 'node:zlib';
@@ -173,6 +174,10 @@ export class StorageRepository {
 
   async unlinkDir(folder: string, options: { recursive?: boolean; force?: boolean }) {
     await fs.rm(folder, { ...options, maxRetries: 5, retryDelay: 100 });
+  }
+
+  async createTempDir(prefix: string): Promise<string> {
+    return fs.mkdtemp(path.join(os.tmpdir(), prefix));
   }
 
   async removeEmptyDirs(directory: string, self: boolean = false) {

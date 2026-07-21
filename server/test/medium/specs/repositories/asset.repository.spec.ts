@@ -24,6 +24,27 @@ beforeAll(async () => {
 });
 
 describe(AssetRepository.name, () => {
+  describe('upsertJobStatus', () => {
+    it('should update videoFacesRecognizedAt on an existing job status row', async () => {
+      const { ctx, sut } = setup();
+      const { user } = await ctx.newUser();
+      const { asset } = await ctx.newAsset({ ownerId: user.id });
+
+      // the metadata job creates the row first, so the video timestamp always hits the conflict path
+      await sut.upsertJobStatus({ assetId: asset.id, metadataExtractedAt: new Date() });
+      const recognizedAt = new Date('2026-01-01T00:00:00Z');
+      await sut.upsertJobStatus({ assetId: asset.id, videoFacesRecognizedAt: recognizedAt });
+
+      const row = await ctx.database
+        .selectFrom('asset_job_status')
+        .select(['videoFacesRecognizedAt', 'metadataExtractedAt'])
+        .where('assetId', '=', asset.id)
+        .executeTakeFirstOrThrow();
+      expect(row.videoFacesRecognizedAt).toEqual(recognizedAt);
+      expect(row.metadataExtractedAt).not.toBeNull();
+    });
+  });
+
   describe('getTimeBucket', () => {
     it('should order assets by local day first and fileCreatedAt within each day', async () => {
       const { ctx, sut } = setup();
