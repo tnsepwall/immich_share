@@ -92,7 +92,9 @@
     </div>
   </a>
 
-  {#if showVerticalDots}
+  <!-- Hide/merge/birth-date/favorite are all owner-only mutations - a person projected from a
+       shared library gets no menu (Editors rename from the person's own page instead). -->
+  {#if showVerticalDots && person.isOwner !== false}
     <div class="absolute inset-e-2 top-2 z-1">
       <ButtonContextMenu
         buttonClass="icon-white-drop-shadow"

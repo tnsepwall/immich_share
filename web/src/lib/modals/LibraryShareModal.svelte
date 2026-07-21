@@ -181,6 +181,10 @@
             {$t('library_editor_can_label_faces')}
           </li>
           <li class="flex place-items-center gap-2 py-1">
+            <Icon icon={mdiCheck} />
+            {$t('library_editor_can_tag')}
+          </li>
+          <li class="flex place-items-center gap-2 py-1">
             <Icon icon={mdiClose} />
             {$t('library_editor_cannot_delete_or_change_visibility')}
           </li>

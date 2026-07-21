@@ -409,7 +409,7 @@
 
   {#if authManager.authenticated && authManager.preferences.tags.enabled}
     <section class="relative px-2 pb-12 dark:bg-immich-dark-bg dark:text-immich-dark-fg">
-      <DetailPanelTags {asset} {isOwner} />
+      <DetailPanelTags {asset} {isOwner} {libraryShare} />
     </section>
   {/if}
 {/if}

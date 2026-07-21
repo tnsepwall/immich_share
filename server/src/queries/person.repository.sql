@@ -370,6 +370,47 @@ where
 order by
   "asset_face"."boundingBoxX1" asc
 
+-- PersonRepository.getEditorRenameLibraryId
+select
+  "library_user"."libraryId"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and "library_user"."role" = 'editor'
+  and exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."libraryId" = "library_user"."libraryId"
+      and "asset"."visibility" = 'timeline'
+      and "asset"."deletedAt" is null
+    where
+      "asset_face"."personId" = $2
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $3
+  )
+  and not exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+    where
+      "asset_face"."personId" = $4
+      and "asset_face"."deletedAt" is null
+      and (
+        "asset"."libraryId" is null
+        or "asset"."libraryId" != "library_user"."libraryId"
+      )
+  )
+limit
+  $5
+
 -- PersonRepository.getFaceById
 select
   "asset_face".*,

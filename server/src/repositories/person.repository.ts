@@ -786,6 +786,64 @@ export class PersonRepository {
     });
   }
 
+  // Read-side twin of updatePersonNameForLibrary's authorization chain: finds the shared library (if
+  // any) through which `actorId` may rename this person. Mirrors checkLibraryEditorAccessTx (active
+  // Editor share on a non-deleted library with a non-deleted owner) + isPersonInLibraryScopeTx (person
+  // reachable via a visible in-library face) + isPersonExclusiveToLibraryTx (zero non-deleted faces
+  // outside the library, trashed assets included). Purely a UI routing hint - the write path re-runs
+  // all three checks inside its own transaction.
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
+  async getEditorRenameLibraryId(actorId: string, personId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .select('library_user.libraryId')
+      .where('library_user.userId', '=', actorId)
+      .where('library_user.role', '=', sql.lit(LibraryUserRole.Editor))
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom('asset_face')
+            .innerJoin('asset', (join) =>
+              join
+                .onRef('asset.id', '=', 'asset_face.assetId')
+                .onRef('asset.libraryId', '=', 'library_user.libraryId')
+                .on('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+                .on('asset.deletedAt', 'is', null),
+            )
+            .where('asset_face.personId', '=', personId)
+            .where('asset_face.deletedAt', 'is', null)
+            .where('asset_face.isVisible', '=', true),
+        ),
+      )
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('asset_face')
+              .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+              .where('asset_face.personId', '=', personId)
+              .where('asset_face.deletedAt', 'is', null)
+              .where((inner) =>
+                inner.or([
+                  inner('asset.libraryId', 'is', null),
+                  inner('asset.libraryId', '!=', inner.ref('library_user.libraryId')),
+                ]),
+              ),
+          ),
+        ),
+      )
+      .limit(1)
+      .executeTakeFirst();
+
+    return row?.libraryId ?? null;
+  }
+
   async assignFacesForLibrary(
     libraryId: string,
     actorId: string,

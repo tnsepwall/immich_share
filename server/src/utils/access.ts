@@ -285,6 +285,12 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.asset.checkSharedLibraryAlbumAddAccess(auth.user.id, ids);
     }
 
+    // uses asset ids; Editor-only fallback for attaching the caller's OWN tags to shared-library
+    // assets - a Viewer share must not grant it, and it never widens the generic AssetUpdate check.
+    case Permission.LibraryAssetTag: {
+      return access.asset.checkSharedLibraryTagAccess(auth.user.id, ids);
+    }
+
     // uses library ids; owner ∪ Editor — a Viewer share must not grant this. The library-editor service
     // separately scope-checks the asset ids against the same route library id.
     case Permission.LibraryAssetUpdate: {

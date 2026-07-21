@@ -841,8 +841,12 @@ export type PersonResponseDto = {
     isFavorite?: boolean;
     /** Is hidden */
     isHidden: boolean;
+    /** Whether the requesting user owns this person; false for people reached through a shared library */
+    isOwner?: boolean;
     /** Person name */
     name: string;
+    /** Shared library through which the caller, as a library Editor, may rename this person; null or absent when the caller cannot rename it */
+    renameLibraryId?: string | null;
     /** Thumbnail path */
     thumbnailPath: string;
     /** Last update date */
@@ -7619,6 +7623,7 @@ export enum Permission {
     LibraryUserSelfUpdate = "libraryUser.selfUpdate",
     LibraryAssetAddToAlbum = "libraryAsset.addToAlbum",
     LibraryAssetUpdate = "libraryAsset.update",
+    LibraryAssetTag = "libraryAsset.tag",
     LibraryPersonRead = "libraryPerson.read",
     LibraryPersonCreate = "libraryPerson.create",
     LibraryPersonUpdate = "libraryPerson.update",

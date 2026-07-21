@@ -187,6 +187,41 @@ describe(PersonService.name, () => {
       expect(mocks.person.getById).toHaveBeenCalledWith(person.id);
       expect(mocks.access.person.checkOwnerAccess).toHaveBeenCalledWith(auth.user.id, new Set([person.id]));
     });
+
+    it('should mark an owned person as isOwner without querying the rename hint', async () => {
+      const auth = AuthFactory.create();
+      const person = PersonFactory.create({ ownerId: auth.user.id });
+
+      mocks.person.getById.mockResolvedValue(person);
+      mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set([person.id]));
+
+      await expect(sut.getById(auth, person.id)).resolves.toEqual(
+        expect.objectContaining({ id: person.id, isOwner: true }),
+      );
+      expect(mocks.person.getEditorRenameLibraryId).not.toHaveBeenCalled();
+    });
+
+    it('should include the rename routing hint for a shared-library editor', async () => {
+      const auth = AuthFactory.create();
+      const person = PersonFactory.create({ ownerId: newUuid() });
+      const libraryId = newUuid();
+
+      mocks.person.getById.mockResolvedValue(person);
+      mocks.access.person.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.person.checkSharedLibraryPersonAccess.mockResolvedValue(new Set([person.id]));
+      mocks.person.getEditorRenameLibraryId.mockResolvedValue(libraryId);
+
+      await expect(sut.getById(auth, person.id)).resolves.toEqual(
+        expect.objectContaining({
+          id: person.id,
+          isOwner: false,
+          renameLibraryId: libraryId,
+          birthDate: null,
+          thumbnailPath: '',
+        }),
+      );
+      expect(mocks.person.getEditorRenameLibraryId).toHaveBeenCalledWith(auth.user.id, person.id);
+    });
   });
 
   describe('getThumbnail', () => {
@@ -318,6 +353,7 @@ describe(PersonService.name, () => {
         thumbnailPath: person.thumbnailPath,
         isHidden: false,
         isFavorite: false,
+        isOwner: true,
         updatedAt: expect.any(String),
       });
       expect(mocks.person.update).toHaveBeenCalledWith({ id: person.id, birthDate: '1976-06-30' });
@@ -681,6 +717,7 @@ describe(PersonService.name, () => {
         birthDate: person.birthDate,
         isHidden: person.isHidden,
         isFavorite: person.isFavorite,
+        isOwner: true,
         id: person.id,
         name: person.name,
         thumbnailPath: person.thumbnailPath,

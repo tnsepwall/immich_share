@@ -83,6 +83,19 @@ export const PersonResponseSchema = z
       .optional()
       .describe('Person color (hex)')
       .meta(new HistoryBuilder().added('v1.126.0').stable('v2').getExtensions()),
+    isOwner: z
+      .boolean()
+      .optional()
+      .describe('Whether the requesting user owns this person; false for people reached through a shared library')
+      .meta(new HistoryBuilder().added('v3').getExtensions()),
+    renameLibraryId: z
+      .uuidv4()
+      .nullable()
+      .optional()
+      .describe(
+        'Shared library through which the caller, as a library Editor, may rename this person; null or absent when the caller cannot rename it',
+      )
+      .meta(new HistoryBuilder().added('v3').getExtensions()),
   })
   .meta({ id: 'PersonResponseDto' });
 
@@ -182,6 +195,7 @@ export function mapPerson(person: MaybeDehydrated<Person>): PersonResponseDto {
     isFavorite: person.isFavorite,
     color: person.color ?? undefined,
     updatedAt: asDateTimeString(person.updatedAt),
+    isOwner: true,
   };
 }
 
@@ -202,6 +216,10 @@ export function redactPersonForNonOwner(person: PersonResponseDto): PersonRespon
     isFavorite: false,
     color: undefined,
     updatedAt: person.updatedAt,
+    isOwner: false,
+    // Rename routing is an extra per-person query, so only PersonService#getById fills it in; every
+    // other projection (lists, nested faces) leaves it null = "not renamable here".
+    renameLibraryId: null,
   };
 }
 

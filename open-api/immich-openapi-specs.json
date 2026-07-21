@@ -22418,6 +22418,7 @@
           "libraryUser.selfUpdate",
           "libraryAsset.addToAlbum",
           "libraryAsset.update",
+          "libraryAsset.tag",
           "libraryPerson.read",
           "libraryPerson.create",
           "libraryPerson.update",
@@ -22602,9 +22603,32 @@
             "description": "Is hidden",
             "type": "boolean"
           },
+          "isOwner": {
+            "description": "Whether the requesting user owns this person; false for people reached through a shared library",
+            "type": "boolean",
+            "x-immich-history": [
+              {
+                "version": "v3",
+                "state": "Added"
+              }
+            ]
+          },
           "name": {
             "description": "Person name",
             "type": "string"
+          },
+          "renameLibraryId": {
+            "description": "Shared library through which the caller, as a library Editor, may rename this person; null or absent when the caller cannot rename it",
+            "format": "uuid",
+            "nullable": true,
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+            "type": "string",
+            "x-immich-history": [
+              {
+                "version": "v3",
+                "state": "Added"
+              }
+            ]
           },
           "thumbnailPath": {
             "description": "Thumbnail path",

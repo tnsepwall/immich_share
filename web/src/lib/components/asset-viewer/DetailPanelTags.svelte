@@ -5,6 +5,7 @@
   import { Route } from '$lib/route';
   import { getAssetActions } from '$lib/services/asset.service';
   import { removeTag } from '$lib/utils/asset-utils';
+  import { isLibraryShareEditor, type LibraryShareContext } from '$lib/utils/library-share-context';
   import { getAssetInfo, type AssetResponseDto } from '@immich/sdk';
   import { Badge, Link, Text } from '@immich/ui';
   import { t } from 'svelte-i18n';
@@ -12,9 +13,14 @@
   interface Props {
     asset: AssetResponseDto;
     isOwner: boolean;
+    libraryShare?: LibraryShareContext;
   }
 
-  let { asset = $bindable(), isOwner }: Props = $props();
+  let { asset = $bindable(), isOwner, libraryShare }: Props = $props();
+
+  // A shared-library Editor may attach/remove their own tags on the owner's asset (server enforces
+  // both tag ownership and the Editor role); a Viewer share keeps the section hidden.
+  let canTag = $derived(isOwner || isLibraryShareEditor(libraryShare));
 
   let tags = $derived(asset.tags || []);
 
@@ -36,7 +42,7 @@
 
 <OnEvents {onAssetsTag} />
 
-{#if isOwner && !authManager.isSharedLink}
+{#if canTag && !authManager.isSharedLink}
   <section class="mt-4 px-4">
     <div class="flex h-10 w-full items-center justify-between text-sm">
       <Text color="muted">{$t('tags')}</Text>

@@ -194,7 +194,14 @@ export class PersonService extends BaseService {
     const person = await this.findOrFail(id);
     // Phase 5 (§5.3): PersonRead is now widened to shared-library reachability - redact for anyone
     // who isn't the owner rather than returning the full account-wide projection.
-    return person.ownerId === auth.user.id ? mapPerson(person) : redactPersonForNonOwner(mapPerson(person));
+    if (person.ownerId === auth.user.id) {
+      return mapPerson(person);
+    }
+    const redacted = redactPersonForNonOwner(mapPerson(person));
+    // Routing hint for the web: which shared library (if any) lets this caller rename the person via
+    // the library-editor endpoint. The write path re-validates, so a stale hint only costs an error toast.
+    redacted.renameLibraryId = await this.personRepository.getEditorRenameLibraryId(auth.user.id, id);
+    return redacted;
   }
 
   async getStatistics(auth: AuthDto, id: string): Promise<PersonStatisticsResponseDto> {

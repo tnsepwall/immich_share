@@ -754,6 +754,7 @@ select
           inner join "tag_asset" on "tag"."id" = "tag_asset"."tagId"
         where
           "asset"."id" = "tag_asset"."assetId"
+          and "tag"."userId" = "asset"."ownerId"
       ) as agg
   ) as "tags"
 from

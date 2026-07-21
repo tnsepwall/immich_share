@@ -301,6 +301,34 @@ class AssetAccess {
       .then((assets) => new Set(assets.map((asset) => asset.id)));
   }
 
+  // Same reachability shape as checkSharedLibraryAlbumAddAccess above, but restricted to the Editor
+  // role: attaching a tag writes a curation row against the owner's asset, so a Viewer share must not
+  // grant it (mirrors the LibraryAssetUpdate owner ∪ Editor rule).
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryTagAccess(userId: string, assetIds: Set<string>) {
+    if (assetIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('library_user')
+      .innerJoin('library', (join) =>
+        join.onRef('library.id', '=', 'library_user.libraryId').on('library.deletedAt', 'is', null),
+      )
+      .innerJoin('user as owner', (join) =>
+        join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
+      )
+      .innerJoin('asset', (join) => join.onRef('asset.libraryId', '=', 'library.id').on('asset.deletedAt', 'is', null))
+      .select('asset.id')
+      .where('library_user.userId', '=', userId)
+      .where('library_user.role', '=', sql.lit(LibraryUserRole.Editor))
+      .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline))
+      .where('asset.id', 'in', [...assetIds])
+      .execute()
+      .then((assets) => new Set(assets.map((asset) => asset.id)));
+  }
+
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
   async checkSharedLinkAccess(sharedLinkId: string, assetIds: Set<string>) {

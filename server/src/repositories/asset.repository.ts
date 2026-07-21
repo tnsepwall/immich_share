@@ -1541,7 +1541,11 @@ export class AssetRepository {
             .selectFrom('tag')
             .select('tag.value')
             .innerJoin('tag_asset', 'tag.id', 'tag_asset.tagId')
-            .whereRef('asset.id', '=', 'tag_asset.assetId'),
+            .whereRef('asset.id', '=', 'tag_asset.assetId')
+            // Only the asset OWNER's tags feed the exif tag list (and from there the sidecar-write
+            // pipeline). A shared-library Editor's tags are their own organization and must never
+            // leak into the owner's metadata or originals.
+            .whereRef('tag.userId', '=', 'asset.ownerId'),
         ).as('tags'),
       )
       .where('asset.id', '=', id)

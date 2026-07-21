@@ -1289,6 +1289,7 @@
   "library_edit_folder": "Edit folder",
   "library_editor_can_edit_metadata": "Edit description, date/time, time zone, and GPS location",
   "library_editor_can_label_faces": "Label and reassign faces",
+  "library_editor_can_tag": "Add their own tags to shared photos and videos",
   "library_editor_cannot_delete_or_change_visibility": "Cannot delete assets or change visibility, archive, or lock status",
   "library_editor_role_explainer_title": "As an Editor, you can:",
   "library_not_shared_yet": "This library hasn't been shared with anyone yet",

@@ -308,6 +308,61 @@ describe(PersonRepository.name, () => {
     });
   });
 
+  describe('getEditorRenameLibraryId', () => {
+    it('should return the library for an Editor when the person is exclusive to it', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: editor } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: editor.id, role: LibraryUserRole.Editor });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.getEditorRenameLibraryId(editor.id, person.id)).resolves.toBe(library.id);
+    });
+
+    it('should return null for a Viewer share', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: viewer } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: viewer.id, role: LibraryUserRole.Viewer });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+
+      await expect(sut.getEditorRenameLibraryId(viewer.id, person.id)).resolves.toBeNull();
+    });
+
+    it('should return null when the person also has a face outside the library', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: editor } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, { libraryId: library.id, userId: editor.id, role: LibraryUserRole.Editor });
+      const { asset: inLibrary } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { asset: outside } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: outside.id, personId: person.id });
+
+      await expect(sut.getEditorRenameLibraryId(editor.id, person.id)).resolves.toBeNull();
+    });
+  });
+
   describe('getAllForSharedLibraries (Phase 5)', () => {
     it('should return empty when no shared library ids are given', async () => {
       const { sut } = setup();

@@ -247,6 +247,23 @@ describe(TagService.name, () => {
         { tagId: 'tag-2', assetId: 'asset-3' },
       ]);
     });
+
+    it('should tag a shared-library asset through the Editor fallback', async () => {
+      mocks.access.tag.checkOwnerAccess.mockResolvedValue(new Set(['tag-1']));
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkSharedLibraryTagAccess.mockResolvedValue(new Set(['asset-1']));
+      mocks.asset.getForUpdateTags.mockResolvedValue({ tags: [] });
+      mocks.tag.upsertAssetIds.mockResolvedValue([{ tagId: 'tag-1', assetId: 'asset-1' }]);
+
+      await expect(sut.bulkTagAssets(authStub.admin, { tagIds: ['tag-1'], assetIds: ['asset-1'] })).resolves.toEqual({
+        count: 1,
+      });
+      expect(mocks.access.asset.checkSharedLibraryTagAccess).toHaveBeenCalledWith(
+        authStub.admin.user.id,
+        new Set(['asset-1']),
+      );
+      expect(mocks.tag.upsertAssetIds).toHaveBeenCalledWith([{ tagId: 'tag-1', assetId: 'asset-1' }]);
+    });
   });
 
   describe('addAssets', () => {
@@ -289,6 +306,24 @@ describe(TagService.name, () => {
       );
       expect(mocks.tag.getAssetIds).toHaveBeenCalledWith('tag-1', ['asset-1', 'asset-2']);
       expect(mocks.tag.addAssetIds).toHaveBeenCalledWith('tag-1', ['asset-2']);
+    });
+
+    it('should accept a shared-library asset through the Editor fallback', async () => {
+      mocks.tag.get.mockResolvedValue(tagStub.tag);
+      mocks.tag.getAssetIds.mockResolvedValue(new Set());
+      mocks.tag.addAssetIds.mockResolvedValue();
+      mocks.asset.getForUpdateTags.mockResolvedValue({ tags: [] });
+      mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set());
+      mocks.access.asset.checkSharedLibraryTagAccess.mockResolvedValue(new Set(['asset-1']));
+
+      await expect(sut.addAssets(authStub.admin, 'tag-1', { ids: ['asset-1'] })).resolves.toEqual([
+        { id: 'asset-1', success: true },
+      ]);
+      expect(mocks.access.asset.checkSharedLibraryTagAccess).toHaveBeenCalledWith(
+        authStub.admin.user.id,
+        new Set(['asset-1']),
+      );
+      expect(mocks.tag.addAssetIds).toHaveBeenCalledWith('tag-1', ['asset-1']);
     });
   });
 

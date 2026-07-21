@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Insertable } from 'kysely';
 import { OnJob } from 'src/decorators';
-import { BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
+import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
   TagBulkAssetsDto,
@@ -15,8 +15,10 @@ import {
 import { JobName, JobStatus, Permission, QueueName } from 'src/enum';
 import { TagAssetTable } from 'src/schema/tables/tag-asset.table';
 import { BaseService } from 'src/services/base.service';
+import { isGranted } from 'src/utils/access';
 import { addAssets, removeAssets } from 'src/utils/asset.util';
 import { updateLockedColumns } from 'src/utils/database';
+import { setUnion } from 'src/utils/set';
 import { upsertTags } from 'src/utils/tag';
 
 @Injectable()
@@ -77,10 +79,27 @@ export class TagService extends BaseService {
   }
 
   async bulkTagAssets(auth: AuthDto, dto: TagBulkAssetsDto): Promise<TagBulkAssetsResponseDto> {
-    const [tagIds, assetIds] = await Promise.all([
+    const [tagIds, ownedAssetIds] = await Promise.all([
       this.checkAccess({ auth, permission: Permission.TagAsset, ids: dto.tagIds }),
       this.checkAccess({ auth, permission: Permission.AssetUpdate, ids: dto.assetIds }),
     ]);
+
+    // Shared-library Editors may attach their OWN tags to the owner's assets. An API key must hold
+    // LibraryAssetTag explicitly - AssetUpdate alone does not imply the fallback (same rule as the
+    // album-insertion fallback in AlbumService#resolveLibraryAlbumGrants).
+    let assetIds = ownedAssetIds;
+    const remainingAssetIds = dto.assetIds.filter((assetId) => !assetIds.has(assetId));
+    if (
+      remainingAssetIds.length > 0 &&
+      (!auth.apiKey || isGranted({ requested: [Permission.LibraryAssetTag], current: auth.apiKey.permissions }))
+    ) {
+      const editorAssetIds = await this.checkAccess({
+        auth,
+        permission: Permission.LibraryAssetTag,
+        ids: remainingAssetIds,
+      });
+      assetIds = setUnion(assetIds, editorAssetIds);
+    }
 
     const items: Insertable<TagAssetTable>[] = [];
     for (const tagId of tagIds) {
@@ -106,6 +125,27 @@ export class TagService extends BaseService {
       { access: this.accessRepository, bulk: this.tagRepository },
       { parentId: id, assetIds: dto.ids },
     );
+
+    // The shared util only grants owner ∪ partner (AssetShare); retry denials through the
+    // shared-library Editor fallback, same API-key rule as bulkTagAssets above.
+    const deniedIds = results
+      .filter(({ success, error }) => !success && error === BulkIdErrorReason.NO_PERMISSION)
+      .map(({ id: assetId }) => assetId);
+    if (
+      deniedIds.length > 0 &&
+      (!auth.apiKey || isGranted({ requested: [Permission.LibraryAssetTag], current: auth.apiKey.permissions }))
+    ) {
+      const grantedIds = await this.checkAccess({ auth, permission: Permission.LibraryAssetTag, ids: deniedIds });
+      if (grantedIds.size > 0) {
+        await this.tagRepository.addAssetIds(id, [...grantedIds]);
+        for (const result of results) {
+          if (grantedIds.has(result.id)) {
+            result.success = true;
+            result.error = undefined;
+          }
+        }
+      }
+    }
 
     for (const { id: assetId, success } of results) {
       if (success) {

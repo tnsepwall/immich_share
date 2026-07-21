@@ -193,6 +193,23 @@ where
   and "asset"."visibility" = 'timeline'
   and "asset"."id" in ($2)
 
+-- AccessRepository.asset.checkSharedLibraryTagAccess
+select
+  "asset"."id"
+from
+  "library_user"
+  inner join "library" on "library"."id" = "library_user"."libraryId"
+  and "library"."deletedAt" is null
+  inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+  and "owner"."deletedAt" is null
+  inner join "asset" on "asset"."libraryId" = "library"."id"
+  and "asset"."deletedAt" is null
+where
+  "library_user"."userId" = $1
+  and "library_user"."role" = 'editor'
+  and "asset"."visibility" = 'timeline'
+  and "asset"."id" in ($2)
+
 -- AccessRepository.asset.checkSharedLinkAccess
 select
   "asset"."id" as "assetId",

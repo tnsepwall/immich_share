@@ -351,11 +351,14 @@
             onToggleFavorite={() => handleToggleFavorite(person)}
           />
 
+          <!-- The inline rename hits the owner-only person route; a shared-library person is renamed
+               from their own page instead, where the Editor library routing hint is available. -->
           <input
             type="text"
             class="mt-2 w-full rounded-2xl border-gray-100 bg-white py-2 text-center text-sm text-primary placeholder-gray-400 dark:border-gray-900 dark:bg-immich-dark-gray"
             value={person.name}
             placeholder={$t('add_a_name')}
+            disabled={person.isOwner === false}
             use:shortcut={{ shortcut: { key: 'Enter' }, onShortcut: (e) => e.currentTarget.blur() }}
             onfocusin={() => onNameChangeInputFocus(person)}
             onfocusout={() => onNameChangeSubmit(newName, person)}

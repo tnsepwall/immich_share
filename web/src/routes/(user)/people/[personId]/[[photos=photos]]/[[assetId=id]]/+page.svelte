@@ -37,7 +37,7 @@
   import { handleError } from '$lib/utils/handle-error';
   import { isExternalUrl } from '$lib/utils/navigation';
   import { normalizeSearchString } from '$lib/utils/string-utils';
-  import { AssetVisibility, searchPerson, updatePerson, type PersonResponseDto } from '@immich/sdk';
+  import { AssetVisibility, searchPerson, updateLibraryPerson, updatePerson, type PersonResponseDto } from '@immich/sdk';
   import {
     ActionButton,
     CommandPaletteDefaultProvider,
@@ -66,6 +66,11 @@
   let numberOfAssets = $derived(data.statistics?.assets);
   let person = $derived(data.person);
   let thumbnailData = $derived(getPeopleThumbnailUrl(person));
+  // isOwner is absent (older payloads) or true for the caller's own people; explicitly false for a
+  // person projected from a shared library. Editors get renameLibraryId as the write route for names;
+  // every other person mutation (merge, hide, birth date, feature photo) stays owner-only.
+  let isPersonOwner = $derived(person.isOwner !== false);
+  let canRename = $derived(isPersonOwner || !!person.renameLibraryId);
 
   let timelineManager = $state<TimelineManager>() as TimelineManager;
   // withSharedLibraries makes a shared-library person's timeline actually load (plan §5.9); for the
@@ -195,6 +200,9 @@
 
   const handleSuggestPeople = async (person2: PersonResponseDto) => {
     isEditingName = false;
+    if (!isPersonOwner) {
+      return;
+    }
     if (person.id !== person2.id) {
       potentialMergePeople = [];
       personMerge1 = person;
@@ -217,7 +225,20 @@
     }
 
     try {
-      person = await updatePerson({ id: person.id, personUpdateDto: { name: personName } });
+      if (isPersonOwner) {
+        person = await updatePerson({ id: person.id, personUpdateDto: { name: personName } });
+      } else if (person.renameLibraryId) {
+        // The generic person route is owner-only; Editors rename through the library-scoped endpoint,
+        // which re-validates role + "every face inside this library" server-side.
+        const updated = await updateLibraryPerson({
+          libraryId: person.renameLibraryId,
+          personId: person.id,
+          libraryPersonUpdateDto: { name: personName },
+        });
+        person = { ...person, name: updated.name };
+      } else {
+        return;
+      }
       toastManager.primary($t('change_name_successfully'));
     } catch (error) {
       handleError(error, $t('errors.unable_to_save_name'));
@@ -237,7 +258,9 @@
     if (person.name === personName) {
       return;
     }
-    if (name === '') {
+    // Merge suggestions act on the caller's own catalog - meaningless (and owner-only) for a
+    // shared-library person, so an Editor rename skips straight to the save.
+    if (name === '' || !isPersonOwner) {
       await changeName();
       return;
     }
@@ -384,8 +407,13 @@
                 <button
                   type="button"
                   class="flex items-center justify-center"
-                  title={$t('edit_name')}
-                  onclick={() => (isEditingName = true)}
+                  title={canRename ? $t('edit_name') : undefined}
+                  disabled={!canRename}
+                  onclick={() => {
+                    if (canRename) {
+                      isEditingName = true;
+                    }
+                  }}
                 >
                   <ImageThumbnail
                     circle
@@ -511,10 +539,13 @@
     {#if viewMode === PersonPageViewMode.VIEW_ASSETS}
       <ControlAppBar backIcon={mdiArrowLeft} onClose={() => goto(previousRoute)}>
         {#snippet trailing()}
-          <ContextMenuButton
-            items={[SelectFeaturePhoto, HidePerson, ShowPerson, SetDateOfBirth, Merge, Favorite, Unfavorite]}
-            aria-label={$t('open')}
-          />
+          <!-- Every one of these mutations is owner-only (Editors only get the name, via changeName) -->
+          {#if isPersonOwner}
+            <ContextMenuButton
+              items={[SelectFeaturePhoto, HidePerson, ShowPerson, SetDateOfBirth, Merge, Favorite, Unfavorite]}
+              aria-label={$t('open')}
+            />
+          {/if}
         {/snippet}
       </ControlAppBar>
     {/if}
