@@ -83,6 +83,7 @@
     }
   },
   "features": {
+	  "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       // https://github.com/devcontainers/features/issues/1466
       "moby": false
@@ -110,7 +111,7 @@
   },
   "overrideCommand": true,
   "workspaceFolder": "/usr/src/app",
-  "remoteUser": "root",
+  "remoteUser": "node",
   "userEnvProbe": "loginInteractiveShell",
   "remoteEnv": {
     // The location where your uploaded files are stored
