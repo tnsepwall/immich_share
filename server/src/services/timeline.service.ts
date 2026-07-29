@@ -32,7 +32,7 @@ export class TimelineService extends BaseService {
     library: Library | undefined,
   ): Promise<TimeBucketOptions> {
     const { userId, ...options } = dto;
-    let userIds: string[] | undefined = undefined;
+    let userIds: string[] | undefined;
 
     let sharedLibraryIds: string[] | undefined;
 
@@ -105,13 +105,16 @@ export class TimelineService extends BaseService {
       // do NOT set dto.userId here — that would route into the TimelineRead/ArchiveRead check below, which
       // only owner ∪ partner can pass; shared-library access is authorized above, independently of TimelineRead.
     } else {
-      dto.userId = dto.userId || auth.user.id;
+      dto.userId ||= auth.user.id;
     }
 
     if (dto.userId) {
       await this.requireAccess({ auth, permission: Permission.TimelineRead, ids: [dto.userId] });
       if (dto.visibility === AssetVisibility.Archive) {
         await this.requireAccess({ auth, permission: Permission.ArchiveRead, ids: [dto.userId] });
+      }
+      if (dto.visibility === AssetVisibility.Locked && dto.userId !== auth.user.id) {
+        throw new BadRequestException("You may not access another user's locked timeline");
       }
     }
 
@@ -132,12 +135,12 @@ export class TimelineService extends BaseService {
     }
 
     if (dto.withPartners || dto.withSharedLibraries) {
-      const requestedLocked = dto.visibility === AssetVisibility.Locked;
-      const requestedArchived = dto.visibility === AssetVisibility.Archive || dto.visibility === undefined;
-      const requestedFavorite = dto.isFavorite === true || dto.isFavorite === false;
-      const requestedTrash = dto.isTrashed === true;
+      const isRequestedLocked = dto.visibility === AssetVisibility.Locked;
+      const isRequestedArchived = dto.visibility === AssetVisibility.Archive || dto.visibility === undefined;
+      const isRequestedFavorite = dto.isFavorite === true || dto.isFavorite === false;
+      const isRequestedTrash = dto.isTrashed === true;
 
-      if (requestedLocked || requestedArchived || requestedFavorite || requestedTrash) {
+      if (isRequestedLocked || isRequestedArchived || isRequestedFavorite || isRequestedTrash) {
         throw new BadRequestException(
           'withPartners/withSharedLibraries is only supported for non-archived, non-trashed, non-favorited, non-locked assets',
         );

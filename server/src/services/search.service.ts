@@ -119,7 +119,7 @@ export class SearchService extends BaseService {
   }
 
   async searchStatistics(auth: AuthDto, dto: StatisticsSearchDto): Promise<SearchStatisticsResponseDto> {
-    const { userIds, sharedLibraryIds } = await this.getUserIdsToSearch(auth);
+    const { userIds, sharedLibraryIds } = await this.getUserIdsToSearch(auth, dto.visibility);
     if (dto.visibility === AssetVisibility.Locked) {
       requireElevatedPermission(auth);
     }
