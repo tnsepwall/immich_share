@@ -1,4 +1,4 @@
-import { FileValidator, Injectable } from '@nestjs/common';
+import { ArgumentMetadata, FileValidator, Injectable, ParseUUIDPipe } from '@nestjs/common';
 import { DateTime } from 'luxon';
 import { createZodDto } from 'nestjs-zod';
 import sanitize from 'sanitize-filename';
@@ -6,6 +6,18 @@ import { isIP, isIPRange } from 'validator';
 import z from 'zod';
 
 export type IsIPRangeOptions = { requireCIDR?: boolean };
+
+// Fork-owned: upstream removed this as dead code in v3.1.0; the shared-library user endpoints
+// (library.controller.ts) accept 'me' or a UUID for :userId.
+@Injectable()
+export class ParseMeUUIDPipe extends ParseUUIDPipe {
+  async transform(value: string, metadata: ArgumentMetadata) {
+    if (value == 'me') {
+      return value;
+    }
+    return super.transform(value, metadata);
+  }
+}
 
 function isIPOrRange(value: string, options?: IsIPRangeOptions): boolean {
   const { requireCIDR = true } = options ?? {};
