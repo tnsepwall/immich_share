@@ -1,9 +1,9 @@
 import { createZodDto } from 'nestjs-zod';
-import { Library, LibraryUser, SharedLibrary } from 'src/database';
-import { UserResponseSchema, mapUser } from 'src/dtos/user.dto';
-import { LibraryUserRole, LibraryUserRoleSchema } from 'src/enum';
-import { isoDatetimeToDate } from 'src/validation';
 import z from 'zod';
+import { Library, LibraryUser, SharedLibrary } from 'src/database.js';
+import { UserResponseSchema, mapUser } from 'src/dtos/user.dto.js';
+import { LibraryUserRole, LibraryUserRoleSchema } from 'src/enum.js';
+import { isoDatetimeToDate } from 'src/validation.js';
 
 const stringArrayMax128 = z
   .array(z.string())

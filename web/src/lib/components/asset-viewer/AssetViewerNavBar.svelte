@@ -1,20 +1,12 @@
 <script lang="ts">
   import ActionMenuItem from '$lib/components/ActionMenuItem.svelte';
   import type { OnAction, PreAction } from '$lib/components/asset-viewer/actions/action';
-  import AddToStackAction from '$lib/components/asset-viewer/actions/AddToStackAction.svelte';
   import ArchiveAction from '$lib/components/asset-viewer/actions/ArchiveAction.svelte';
   import DeleteAction from '$lib/components/asset-viewer/actions/DeleteAction.svelte';
-  import KeepThisDeleteOthersAction from '$lib/components/asset-viewer/actions/KeepThisDeleteOthers.svelte';
-  import RatingAction from '$lib/components/asset-viewer/actions/RatingAction.svelte';
-  import RemoveAssetFromStack from '$lib/components/asset-viewer/actions/RemoveAssetFromStack.svelte';
   import RestoreAction from '$lib/components/asset-viewer/actions/RestoreAction.svelte';
-  import SetFeaturedPhotoAction from '$lib/components/asset-viewer/actions/SetPersonFeaturedAction.svelte';
-  import SetStackPrimaryAsset from '$lib/components/asset-viewer/actions/SetStackPrimaryAsset.svelte';
   import SetVisibilityAction from '$lib/components/asset-viewer/actions/SetVisibilityAction.svelte';
-  import UnstackAction from '$lib/components/asset-viewer/actions/UnstackAction.svelte';
   import LoadingDots from '$lib/components/LoadingDots.svelte';
   import ButtonContextMenu from '$lib/components/shared-components/context-menu/ButtonContextMenu.svelte';
-  import RemoveFromAlbumAction from '$lib/components/timeline/actions/RemoveFromAlbumAction.svelte';
   import { assetViewerManager } from '$lib/managers/asset-viewer-manager.svelte';
   import { authManager } from '$lib/managers/auth-manager.svelte';
   import { languageManager } from '$lib/managers/language-manager.svelte';
@@ -22,6 +14,8 @@
   import { getAlbumAssetActions } from '$lib/services/album.service';
   import { getGlobalActions } from '$lib/services/app.service';
   import { getAssetActions } from '$lib/services/asset.service';
+  import { getPersonAssetActions } from '$lib/services/person.service';
+  import { getStackActions } from '$lib/services/stack.service';
   import { getSharedLink, withoutIcons } from '$lib/utils';
   import type { OnUndoDelete } from '$lib/utils/actions';
   import type { LibraryShareContext } from '$lib/utils/library-share-context';
@@ -41,37 +35,34 @@
 
   interface Props {
     asset: AssetResponseDto;
-    album?: AlbumResponseDto | null;
+    album?: AlbumResponseDto;
     person?: PersonResponseDto | null;
-    stack?: StackResponseDto | null;
+    stack?: StackResponseDto;
     /** Set for the shared-library browse route only - see web/src/lib/utils/library-share-context.ts */
     libraryShare?: LibraryShareContext;
     preAction: PreAction;
     onAction: OnAction;
     onUndoDelete?: OnUndoDelete;
     onClose?: () => void;
-    onRemoveFromAlbum?: (assetIds: string[]) => void;
     isPlayingOriginalVideo: boolean;
     setPlayOriginalVideo: (value: boolean) => void;
   }
 
   let {
     asset,
-    album = null,
+    album,
     person = null,
-    stack = null,
+    stack,
     libraryShare,
     preAction,
     onAction,
     onUndoDelete = undefined,
     onClose,
-    onRemoveFromAlbum,
     isPlayingOriginalVideo = false,
     setPlayOriginalVideo,
   }: Props = $props();
 
   const isOwner = $derived(authManager.authenticated && asset.ownerId === authManager.user.id);
-  const isAlbumOwner = $derived(authManager.authenticated && album?.albumUsers[0].user.id === authManager.user.id);
   const isLocked = $derived(asset.visibility === AssetVisibility.Locked);
 
   const { Cast } = $derived(getGlobalActions($t));
@@ -91,7 +82,8 @@
     onAction: () => setPlayOriginalVideo(!isPlayingOriginalVideo),
   });
 
-  const Actions = $derived(getAssetActions($t, { ...asset, stackPrimaryAssetId: stack?.primaryAssetId }));
+  const Actions = $derived(getAssetActions($t, { ...asset, stackPrimaryAssetId: stack?.primaryAssetId }, album));
+  const StackActions = $derived(getStackActions($t, stack, asset));
   const sharedLink = getSharedLink();
 
   // A shared-library Viewer/Editor never holds `AssetShare` (see design decision 3 in
@@ -174,11 +166,6 @@
     <ActionButton action={EditInfo} />
     <ActionButton action={Actions.Favorite} />
     <ActionButton action={Actions.Unfavorite} />
-
-    {#if isOwner}
-      <RatingAction {asset} {onAction} />
-    {/if}
-
     <ActionButton action={Actions.Edit} />
 
     {#if isOwner}
@@ -197,29 +184,21 @@
         {/if}
 
         <ActionMenuItem action={AddToAlbum} />
-        {#if album && (isOwner || isAlbumOwner)}
-          <RemoveFromAlbumAction {album} onRemove={onRemoveFromAlbum} assetIds={[asset.id]} menuItem />
-        {/if}
+        <ActionMenuItem action={Actions.RemoveFromAlbum} />
 
-        {#if isOwner}
-          <AddToStackAction {asset} {stack} {onAction} />
-          {#if stack}
-            <UnstackAction {stack} {onAction} />
-            <KeepThisDeleteOthersAction {stack} {asset} {onAction} />
-            {#if stack?.primaryAssetId !== asset.id}
-              <SetStackPrimaryAsset {stack} {asset} {onAction} />
-              {#if stack?.assets?.length > 2}
-                <RemoveAssetFromStack {asset} {stack} {onAction} />
-              {/if}
-            {/if}
-          {/if}
-        {/if}
+        <ActionMenuItem action={StackActions.AddUploads} />
+        <ActionMenuItem action={StackActions.Unstack} />
+        <ActionMenuItem action={StackActions.KeepThisDeleteOthers} />
+        <ActionMenuItem action={StackActions.SetPrimaryAsset} />
+        <ActionMenuItem action={StackActions.RemoveAsset} />
+
         {#if album}
           {@const { SetCover } = getAlbumAssetActions($t, album, asset)}
           <ActionMenuItem action={SetCover} />
         {/if}
         {#if person}
-          <SetFeaturedPhotoAction {asset} {person} {onAction} />
+          {@const { SetFeaturedPhoto } = getPersonAssetActions($t, person, asset)}
+          <ActionMenuItem action={SetFeaturedPhoto} />
         {/if}
 
         <ActionMenuItem action={Actions.SetProfilePicture} />

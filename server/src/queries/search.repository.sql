@@ -144,6 +144,7 @@ where
   and "asset"."ownerId" = any ($3::uuid[])
   and "asset"."isFavorite" = $4
   and "asset"."deletedAt" is null
+  and "asset"."visibility" != 'hidden'
   and "asset_exif"."fileSizeInByte" > $5
 order by
   "asset_exif"."fileSizeInByte" desc
@@ -218,15 +219,21 @@ with
   "cte" as (
     select
       "asset_face"."id",
-      "asset_face"."personId",
+      "asset_face"."personGroupId",
       face_search.embedding <=> $1 as "distance"
     from
       "asset_face"
       inner join "asset" on "asset"."id" = "asset_face"."assetId"
       inner join "face_search" on "face_search"."faceId" = "asset_face"."id"
-      left join "person" on "person"."id" = "asset_face"."personId"
     where
-      "asset"."ownerId" = any ($2::uuid[])
+      "asset"."ownerId" in (
+        select
+          "user"."id"
+        from
+          "user"
+        where
+          "user"."clusterGroupId" = $2
+      )
       and "asset"."deletedAt" is null
     order by
       "distance"
@@ -239,7 +246,7 @@ from
   "cte"
 where
   "cte"."distance" <= $4
-commit
+rollback
 
 -- SearchRepository.searchPlaces
 select
@@ -498,14 +505,20 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and true
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $2
+  $4
+offset
+  $5
 
--- SearchRepository.searchMetadataV3 (empty)
+-- SearchRepository.searchMetadataV3 (or-mixed-scope)
 select
   "asset"."id",
   "asset"."updateId",
@@ -539,12 +552,54 @@ from
   "asset"
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
-  true
+  (
+    "asset"."visibility" != $1
+    or "asset"."ownerId" = $2
+  )
+  and (
+    exists (
+      select
+      from
+        "album_asset"
+      where
+        "album_asset"."assetId" = "asset"."id"
+        and (
+          "album_asset"."sourceLibraryId" is null
+          or exists (
+            select
+            from
+              "asset"
+              inner join "library" on "library"."id" = "asset"."libraryId"
+              and "library"."deletedAt" is null
+              inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+              and "owner"."deletedAt" is null
+              left join "library_user" on "library_user"."libraryId" = "library"."id"
+              and "library_user"."userId" = $3
+            where
+              "asset"."id" = "album_asset"."assetId"
+              and "library"."id" = "album_asset"."sourceLibraryId"
+              and "asset"."deletedAt" is null
+              and "asset"."visibility" = 'timeline'
+              and (
+                "library"."ownerId" = $4
+                or "library_user"."userId" is not null
+              )
+          )
+        )
+        and "album_asset"."albumId" = any ($5::uuid[])
+    )
+    or (
+      "asset_exif"."city" = $6
+      and "asset"."ownerId" = any ($7::uuid[])
+    )
+  )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $1
+  $8
+offset
+  $9
 
 -- SearchRepository.searchMetadataV3 (or-exif-only)
 select
@@ -581,12 +636,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
-  and "asset_exif"."city" = $2
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and "asset_exif"."city" = $4
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (string-eq-null)
 select
@@ -623,12 +684,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and "asset_exif"."city" is null
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $2
+  $4
+offset
+  $5
 
 -- SearchRepository.searchMetadataV3 (string-pattern-like)
 select
@@ -665,12 +732,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
-  and f_unaccent ("asset_exif"."description") ilike ('%' || f_unaccent ($2) || '%')
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and f_unaccent ("asset_exif"."description") ilike ('%' || f_unaccent ($4) || '%')
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (string-pattern-notLike)
 select
@@ -707,12 +780,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
-  and f_unaccent ("asset_exif"."description") not ilike ('%' || f_unaccent ($2) || '%')
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and f_unaccent ("asset_exif"."description") not ilike ('%' || f_unaccent ($4) || '%')
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (string-pattern-startsWith)
 select
@@ -749,12 +828,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
-  and f_unaccent ("asset"."originalFileName") ilike (f_unaccent ($2) || '%')
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and f_unaccent ("asset"."originalFileName") ilike (f_unaccent ($4) || '%')
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (string-similarity-ocr)
 select
@@ -791,19 +876,25 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and exists (
     select
     from
       "ocr_search"
     where
       "ocr_search"."assetId" = "asset"."id"
-      and f_unaccent (ocr_search.text) %>> f_unaccent ($2)
+      and f_unaccent (ocr_search.text) %>> f_unaccent ($4)
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (ids-any)
 select
@@ -839,20 +930,48 @@ from
   "asset"
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
-  "asset"."ownerId" = any ($1::uuid[])
+  (
+    "asset"."visibility" != $1
+    or "asset"."ownerId" = $2
+  )
   and exists (
     select
     from
       "album_asset"
     where
       "album_asset"."assetId" = "asset"."id"
-      and "album_asset"."albumId" = any ($2::uuid[])
+      and (
+        "album_asset"."sourceLibraryId" is null
+        or exists (
+          select
+          from
+            "asset"
+            inner join "library" on "library"."id" = "asset"."libraryId"
+            and "library"."deletedAt" is null
+            inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+            and "owner"."deletedAt" is null
+            left join "library_user" on "library_user"."libraryId" = "library"."id"
+            and "library_user"."userId" = $3
+          where
+            "asset"."id" = "album_asset"."assetId"
+            and "library"."id" = "album_asset"."sourceLibraryId"
+            and "asset"."deletedAt" is null
+            and "asset"."visibility" = 'timeline'
+            and (
+              "library"."ownerId" = $4
+              or "library_user"."userId" is not null
+            )
+        )
+      )
+      and "album_asset"."albumId" = any ($5::uuid[])
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $6
+offset
+  $7
 
 -- SearchRepository.searchMetadataV3 (ids-all)
 select
@@ -889,6 +1008,10 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and exists (
     select
       "asset_face"."assetId"
@@ -897,18 +1020,20 @@ where
     where
       "asset_face"."assetId" = "asset"."id"
       and "asset_face"."deletedAt" is null
-      and "asset_face"."isVisible" = $2
-      and "asset_face"."personId" = any ($3::uuid[])
+      and "asset_face"."isVisible" = $4
+      and "asset_face"."personGroupId" = any ($5::uuid[])
     group by
       "asset_face"."assetId"
     having
-      count(distinct "asset_face"."personId") = $4
+      count(distinct "asset_face"."personGroupId") = $6
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $5
+  $7
+offset
+  $8
 
 -- SearchRepository.searchMetadataV3 (ids-all-single)
 select
@@ -944,20 +1069,48 @@ from
   "asset"
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
-  "asset"."ownerId" = any ($1::uuid[])
+  (
+    "asset"."visibility" != $1
+    or "asset"."ownerId" = $2
+  )
   and exists (
     select
     from
       "album_asset"
     where
       "album_asset"."assetId" = "asset"."id"
-      and "album_asset"."albumId" = any ($2::uuid[])
+      and (
+        "album_asset"."sourceLibraryId" is null
+        or exists (
+          select
+          from
+            "asset"
+            inner join "library" on "library"."id" = "asset"."libraryId"
+            and "library"."deletedAt" is null
+            inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+            and "owner"."deletedAt" is null
+            left join "library_user" on "library_user"."libraryId" = "library"."id"
+            and "library_user"."userId" = $3
+          where
+            "asset"."id" = "album_asset"."assetId"
+            and "library"."id" = "album_asset"."sourceLibraryId"
+            and "asset"."deletedAt" is null
+            and "asset"."visibility" = 'timeline'
+            and (
+              "library"."ownerId" = $4
+              or "library_user"."userId" is not null
+            )
+        )
+      )
+      and "album_asset"."albumId" = any ($5::uuid[])
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $6
+offset
+  $7
 
 -- SearchRepository.searchMetadataV3 (ids-none)
 select
@@ -994,6 +1147,10 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and not exists (
     select
     from
@@ -1001,13 +1158,15 @@ where
       inner join "tag_closure" on "tag_asset"."tagId" = "tag_closure"."id_descendant"
     where
       "tag_asset"."assetId" = "asset"."id"
-      and "tag_closure"."id_ancestor" = any ($2::uuid[])
+      and "tag_closure"."id_ancestor" = any ($4::uuid[])
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (ids-tags-all)
 select
@@ -1044,6 +1203,10 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and exists (
     select
       "tag_asset"."assetId"
@@ -1052,17 +1215,19 @@ where
       inner join "tag_closure" on "tag_asset"."tagId" = "tag_closure"."id_descendant"
     where
       "tag_asset"."assetId" = "asset"."id"
-      and "tag_closure"."id_ancestor" = any ($2::uuid[])
+      and "tag_closure"."id_ancestor" = any ($4::uuid[])
     group by
       "tag_asset"."assetId"
     having
-      count(distinct "tag_closure"."id_ancestor") = $3
+      count(distinct "tag_closure"."id_ancestor") = $5
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $4
+  $6
+offset
+  $7
 
 -- SearchRepository.searchMetadataV3 (has-albums-false)
 select
@@ -1099,18 +1264,25 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and not exists (
     select
     from
       "album_asset"
     where
       "album_asset"."assetId" = "asset"."id"
+      and "album_asset"."sourceLibraryId" is null
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $2
+  $4
+offset
+  $5
 
 -- SearchRepository.searchMetadataV3 (is-encoded)
 select
@@ -1147,19 +1319,25 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and exists (
     select
     from
       "asset_file"
     where
       "asset_file"."assetId" = "asset"."id"
-      and "asset_file"."type" = $2
+      and "asset_file"."type" = $4
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (number-range)
 select
@@ -1197,14 +1375,20 @@ from
 where
   "asset"."ownerId" = any ($1::uuid[])
   and (
-    "asset_exif"."fileSizeInByte" <= $2
-    and "asset_exif"."fileSizeInByte" >= $3
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset_exif"."fileSizeInByte" <= $4
+    and "asset_exif"."fileSizeInByte" >= $5
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $4
+  $6
+offset
+  $7
 
 -- SearchRepository.searchMetadataV3 (date-eq)
 select
@@ -1241,12 +1425,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
-  and "asset"."fileCreatedAt" = $2
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and "asset"."fileCreatedAt" = $4
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $3
+  $5
+offset
+  $6
 
 -- SearchRepository.searchMetadataV3 (date-range)
 select
@@ -1284,14 +1474,20 @@ from
 where
   "asset"."ownerId" = any ($1::uuid[])
   and (
-    "asset"."fileCreatedAt" < $2
-    and "asset"."fileCreatedAt" >= $3
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset"."fileCreatedAt" < $4
+    and "asset"."fileCreatedAt" >= $5
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $4
+  $6
+offset
+  $7
 
 -- SearchRepository.searchMetadataV3 (order-fileSize-noExif)
 select
@@ -1328,12 +1524,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and true
 order by
   "asset_exif"."fileSizeInByte" desc nulls last,
   "asset"."id" desc
 limit
-  $2
+  $4
+offset
+  $5
 
 -- SearchRepository.searchMetadataV3 (order-rating-withExif)
 select
@@ -1371,12 +1573,18 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and true
 order by
   "asset_exif"."rating" asc nulls last,
   "asset"."id" asc
 limit
-  $2
+  $4
+offset
+  $5
 
 -- SearchRepository.searchMetadataV3 (or-branches)
 select
@@ -1414,7 +1622,11 @@ from
 where
   "asset"."ownerId" = any ($1::uuid[])
   and (
-    "asset"."isFavorite" = $2
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset"."isFavorite" = $4
     or exists (
       select
       from
@@ -1422,15 +1634,17 @@ where
       where
         "asset_face"."assetId" = "asset"."id"
         and "asset_face"."deletedAt" is null
-        and "asset_face"."isVisible" = $3
-        and "asset_face"."personId" = any ($4::uuid[])
+        and "asset_face"."isVisible" = $5
+        and "asset_face"."personGroupId" = any ($6::uuid[])
     )
   )
 order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
-  $5
+  $7
+offset
+  $8
 
 -- SearchRepository.searchMetadataV3 (or-with-top-level)
 select
@@ -1466,19 +1680,48 @@ from
   "asset"
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
-  "asset"."ownerId" = any ($1::uuid[])
+  (
+    "asset"."visibility" != $1
+    or "asset"."ownerId" = $2
+  )
   and (
-    "asset"."fileCreatedAt" < $2
-    and "asset"."fileCreatedAt" >= $3
+    "asset"."fileCreatedAt" < $3
+    and "asset"."fileCreatedAt" >= $4
     and (
-      "asset"."isFavorite" = $4
+      (
+        "asset"."isFavorite" = $5
+        and "asset"."ownerId" = any ($6::uuid[])
+      )
       or exists (
         select
         from
           "album_asset"
         where
           "album_asset"."assetId" = "asset"."id"
-          and "album_asset"."albumId" = any ($5::uuid[])
+          and (
+            "album_asset"."sourceLibraryId" is null
+            or exists (
+              select
+              from
+                "asset"
+                inner join "library" on "library"."id" = "asset"."libraryId"
+                and "library"."deletedAt" is null
+                inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+                and "owner"."deletedAt" is null
+                left join "library_user" on "library_user"."libraryId" = "library"."id"
+                and "library_user"."userId" = $7
+              where
+                "asset"."id" = "album_asset"."assetId"
+                and "library"."id" = "album_asset"."sourceLibraryId"
+                and "asset"."deletedAt" is null
+                and "asset"."visibility" = 'timeline'
+                and (
+                  "library"."ownerId" = $8
+                  or "library_user"."userId" is not null
+                )
+            )
+          )
+          and "album_asset"."albumId" = any ($9::uuid[])
       )
     )
   )
@@ -1486,7 +1729,309 @@ order by
   "asset"."fileCreatedAt" desc,
   "asset"."id" desc
 limit
+  $10
+offset
+  $11
+
+-- SearchRepository.searchMetadataV3 (cursor-offset)
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and "asset"."isFavorite" = $4
+order by
+  "asset"."fileCreatedAt" desc,
+  "asset"."id" desc
+limit
+  $5
+offset
   $6
+
+-- SearchRepository.searchRandomV3 (baseline)
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and true
+order by
+  random()
+limit
+  $4
+
+-- SearchRepository.searchRandomV3 (with-filter)
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and "asset"."isFavorite" = $4
+order by
+  random()
+limit
+  $5
+
+-- SearchRepository.searchSmartV3 (baseline)
+begin
+set
+  local vchordrq.probes = 1
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+  inner join "smart_search" on "asset"."id" = "smart_search"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and true
+order by
+  smart_search.embedding <=> $4,
+  "asset"."id" asc
+limit
+  $5
+offset
+  $6
+commit
+
+-- SearchRepository.searchSmartV3 (with-filter)
+begin
+set
+  local vchordrq.probes = 1
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+  inner join "smart_search" on "asset"."id" = "smart_search"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset"."fileCreatedAt" < $4
+    and "asset"."fileCreatedAt" >= $5
+  )
+order by
+  smart_search.embedding <=> $6,
+  "asset"."id" asc
+limit
+  $7
+offset
+  $8
+commit
+
+-- SearchRepository.searchSmartV3 (cursor-offset)
+begin
+set
+  local vchordrq.probes = 1
+select
+  "asset"."id",
+  "asset"."updateId",
+  "asset"."createdAt",
+  "asset"."updatedAt",
+  "asset"."deletedAt",
+  "asset"."status",
+  "asset"."checksum",
+  "asset"."checksumAlgorithm",
+  "asset"."duplicateId",
+  "asset"."duration",
+  "asset"."fileCreatedAt",
+  "asset"."fileModifiedAt",
+  "asset"."isExternal",
+  "asset"."isFavorite",
+  "asset"."isOffline",
+  "asset"."isEdited",
+  "asset"."visibility",
+  "asset"."libraryId",
+  "asset"."livePhotoVideoId",
+  "asset"."localDateTime",
+  "asset"."originalFileName",
+  "asset"."originalPath",
+  "asset"."ownerId",
+  "asset"."stackId",
+  "asset"."thumbhash",
+  "asset"."type",
+  "asset"."width",
+  "asset"."height"
+from
+  "asset"
+  left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
+  inner join "smart_search" on "asset"."id" = "smart_search"."assetId"
+where
+  "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and true
+order by
+  smart_search.embedding <=> $4,
+  "asset"."id" asc
+limit
+  $5
+offset
+  $6
+commit
 
 -- SearchRepository.searchStatisticsV3 (baseline)
 select
@@ -1496,6 +2041,10 @@ from
   left join "asset_exif" on "asset"."id" = "asset_exif"."assetId"
 where
   "asset"."ownerId" = any ($1::uuid[])
+  and (
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
   and true
 
 -- SearchRepository.searchStatisticsV3 (with-filter)
@@ -1507,9 +2056,13 @@ from
 where
   "asset"."ownerId" = any ($1::uuid[])
   and (
-    "asset_exif"."fileSizeInByte" >= $2
-    and "asset"."fileCreatedAt" < $3
-    and "asset"."fileCreatedAt" >= $4
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset_exif"."fileSizeInByte" >= $4
+    and "asset"."fileCreatedAt" < $5
+    and "asset"."fileCreatedAt" >= $6
   )
 
 -- SearchRepository.searchStatisticsV3 (with-or)
@@ -1521,12 +2074,17 @@ from
 where
   "asset"."ownerId" = any ($1::uuid[])
   and (
-    "asset"."isFavorite" = $2
+    "asset"."visibility" != $2
+    or "asset"."ownerId" = $3
+  )
+  and (
+    "asset"."isFavorite" = $4
     or not exists (
       select
       from
         "album_asset"
       where
         "album_asset"."assetId" = "asset"."id"
+        and "album_asset"."sourceLibraryId" is null
     )
   )

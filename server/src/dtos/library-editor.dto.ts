@@ -1,6 +1,6 @@
 import { createZodDto } from 'nestjs-zod';
-import { IsNotSiblingOf, latitudeSchema, longitudeSchema } from 'src/validation';
 import z from 'zod';
+import { IsNotSiblingOf, latitudeSchema, longitudeSchema } from 'src/validation.js';
 
 // The Editor curation allowlist. These validators are copied from UpdateAssetBaseSchema /
 // AssetBulkUpdateBaseSchema in src/dtos/asset.dto.ts on purpose — same semantics, narrower surface.

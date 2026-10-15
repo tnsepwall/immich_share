@@ -3,17 +3,17 @@ import {
   Column,
   CreateDateColumn,
   ForeignKeyColumn,
-  Generated,
+  type Generated,
   Table,
   Timestamp,
   UpdateDateColumn,
 } from '@immich/sql-tools';
-import { CreateIdColumn, UpdatedAtTrigger, UpdateIdColumn } from 'src/decorators';
-import { LibraryUserRole } from 'src/enum';
-import { library_user_role_enum } from 'src/schema/enums';
-import { library_user_delete_audit } from 'src/schema/functions';
-import { LibraryTable } from 'src/schema/tables/library.table';
-import { UserTable } from 'src/schema/tables/user.table';
+import { CreateIdColumn, UpdateIdColumn, UpdatedAtTrigger } from 'src/decorators.js';
+import { LibraryUserRole } from 'src/enum.js';
+import { library_user_role_enum } from 'src/schema/enums.js';
+import { library_user_delete_audit } from 'src/schema/functions.js';
+import { LibraryTable } from 'src/schema/tables/library.table.js';
+import { UserTable } from 'src/schema/tables/user.table.js';
 
 @Table({ name: 'library_user' })
 @UpdatedAtTrigger('library_user_updatedAt')

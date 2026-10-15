@@ -1,5 +1,5 @@
-import { LibraryAssetBulkUpdateSchema, LibraryAssetUpdateSchema } from 'src/dtos/library-editor.dto';
-import { factory } from 'test/small.factory';
+import { LibraryAssetBulkUpdateSchema, LibraryAssetUpdateSchema } from 'src/dtos/library-editor.dto.js';
+import { factory } from 'test/small.factory.js';
 
 const ids = [factory.uuid()];
 

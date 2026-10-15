@@ -46,7 +46,7 @@ If your library contains many videos, face detection samples frames throughout e
 #### 2. Run Reset Jobs
 
 Go to:  
-**Admin → Administration → Settings → Jobs**
+**Administration → Job Queues**
 
 Perform the following:
 

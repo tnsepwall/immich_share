@@ -1,6 +1,6 @@
-import { PartnerRepository } from 'src/repositories/partner.repository';
-import { SessionRepository } from 'src/repositories/session.repository';
-import { SyncRepository } from 'src/repositories/sync.repository';
+import { PartnerRepository } from 'src/repositories/partner.repository.js';
+import { SessionRepository } from 'src/repositories/session.repository.js';
+import { SyncRepository } from 'src/repositories/sync.repository.js';
 
 /**
  * Phase 6 (mobile pseudo-partner projection via the v2 sync protocol) - the ONE place that decides

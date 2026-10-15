@@ -1,12 +1,12 @@
 import { BadRequestException } from '@nestjs/common';
-import { JobName } from 'src/enum';
-import { LibraryEditorService } from 'src/services/library-editor.service';
-import { AssetFaceFactory } from 'test/factories/asset-face.factory';
-import { AssetFactory } from 'test/factories/asset.factory';
-import { authStub } from 'test/fixtures/auth.stub';
-import { getForAsset } from 'test/mappers';
-import { factory } from 'test/small.factory';
-import { newTestService, ServiceMocks } from 'test/utils';
+import { JobName } from 'src/enum.js';
+import { LibraryEditorService } from 'src/services/library-editor.service.js';
+import { AssetFaceFactory } from 'test/factories/asset-face.factory.js';
+import { AssetFactory } from 'test/factories/asset.factory.js';
+import { authStub } from 'test/fixtures/auth.stub.js';
+import { getForAsset } from 'test/mappers.js';
+import { factory } from 'test/small.factory.js';
+import { ServiceMocks, newTestService } from 'test/utils.js';
 
 describe(LibraryEditorService.name, () => {
   let sut: LibraryEditorService;
@@ -298,7 +298,7 @@ describe(LibraryEditorService.name, () => {
       const face = AssetFaceFactory.create({ id: 'face-1', assetId: 'asset-1' });
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set());
       mocks.access.library.checkSharedAccess.mockResolvedValue(new Set(['library-id']));
-      mocks.person.getFacesForLibraryAsset.mockResolvedValue([face]);
+      mocks.person.getFacesForLibraryAsset.mockResolvedValue([{ ...face, person: null }]);
 
       const result = await sut.getAssetFaces(authStub.user1, 'library-id', 'asset-1');
 
@@ -335,6 +335,7 @@ describe(LibraryEditorService.name, () => {
     it('should create the person, queue a feature-photo refresh job, and return the mapped result', async () => {
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
       mocks.person.createPersonForLibrary.mockResolvedValue({
+        ownerId: 'owner-id',
         personId: 'new-person',
         needsFeaturePhoto: ['new-person'],
       });
@@ -346,14 +347,18 @@ describe(LibraryEditorService.name, () => {
         'face-1',
       ]);
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.PersonGenerateThumbnail, data: { id: 'new-person' } },
+        { name: JobName.PersonGenerateThumbnail, data: { ownerId: 'owner-id', personGroupId: 'new-person' } },
       ]);
       expect(result).toEqual({ id: 'new-person', name: 'Alice', thumbnailFace: null });
     });
 
     it('should not queue any job when no feature photo needs refreshing', async () => {
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
-      mocks.person.createPersonForLibrary.mockResolvedValue({ personId: 'new-person', needsFeaturePhoto: [] });
+      mocks.person.createPersonForLibrary.mockResolvedValue({
+        ownerId: 'owner-id',
+        personId: 'new-person',
+        needsFeaturePhoto: [],
+      });
       mocks.person.getOneForLibrary.mockResolvedValue({ id: 'new-person', name: 'Alice', thumbnailFace: null });
 
       await sut.createPerson(authStub.user1, 'library-id', { name: 'Alice', faceIds: ['face-1'] });
@@ -423,11 +428,11 @@ describe(LibraryEditorService.name, () => {
     });
 
     it('should reassign, queue a feature-photo refresh for the person who lost theirs, and return the mapped faces', async () => {
-      const target = { id: 'target-person', name: 'Target' };
+      const target = { personGroupId: 'target-person', name: 'Target' };
       const face = { ...AssetFaceFactory.create({ id: 'face-1' }), person: target };
 
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
-      mocks.person.assignFacesForLibrary.mockResolvedValue({ needsFeaturePhoto: ['old-person'] });
+      mocks.person.assignFacesForLibrary.mockResolvedValue({ ownerId: 'owner-id', needsFeaturePhoto: ['old-person'] });
       mocks.person.getFaceById.mockResolvedValue(face as any);
 
       const result = await sut.assignFaces(authStub.user1, 'library-id', {
@@ -442,9 +447,12 @@ describe(LibraryEditorService.name, () => {
         ['face-1'],
       );
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.PersonGenerateThumbnail, data: { id: 'old-person' } },
+        { name: JobName.PersonGenerateThumbnail, data: { ownerId: 'owner-id', personGroupId: 'old-person' } },
       ]);
-      expect(result).toEqual([expect.objectContaining({ id: 'face-1', person: target })]);
+      expect(mocks.person.getFaceById).toHaveBeenCalledWith('face-1', { viewingUserId: 'owner-id' });
+      expect(result).toEqual([
+        expect.objectContaining({ id: 'face-1', person: { id: 'target-person', name: 'Target' } }),
+      ]);
     });
   });
 
@@ -493,12 +501,16 @@ describe(LibraryEditorService.name, () => {
 
     it('should create a face directly from the given box when the asset has no edits', async () => {
       const asset = AssetFactory.create({ id: 'asset-1', libraryId: 'library-id', width: 1000, height: 800 });
-      const person = { id: 'person-1', name: 'Alice', faceAssetId: 'existing-face' };
+      const person = { personGroupId: 'person-1', name: 'Alice', faceAssetId: 'existing-face' };
 
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
       mocks.asset.getById.mockResolvedValue(getForAsset(asset));
-      mocks.person.createManualFaceForLibrary.mockResolvedValue({ faceId: 'face-1', needsFeaturePhoto: [] });
-      mocks.person.getById.mockResolvedValue(person as any);
+      mocks.person.createManualFaceForLibrary.mockResolvedValue({
+        ownerId: 'owner-id',
+        faceId: 'face-1',
+        needsFeaturePhoto: [],
+      });
+      mocks.person.getByGroupId.mockResolvedValue(person as any);
 
       const result = await sut.createManualFace(authStub.user1, 'library-id', dto);
 
@@ -522,20 +534,21 @@ describe(LibraryEditorService.name, () => {
 
     it('should queue a feature-photo refresh when the repository primitive reports one is needed', async () => {
       const asset = AssetFactory.create({ id: 'asset-1', libraryId: 'library-id', width: 1000, height: 800 });
-      const person = { id: 'person-1', name: 'Alice', faceAssetId: null };
+      const person = { personGroupId: 'person-1', name: 'Alice', faceAssetId: null };
 
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
       mocks.asset.getById.mockResolvedValue(getForAsset(asset));
       mocks.person.createManualFaceForLibrary.mockResolvedValue({
+        ownerId: 'owner-id',
         faceId: 'face-1',
         needsFeaturePhoto: ['person-1'],
       });
-      mocks.person.getById.mockResolvedValue(person as any);
+      mocks.person.getByGroupId.mockResolvedValue(person as any);
 
       await sut.createManualFace(authStub.user1, 'library-id', dto);
 
       expect(mocks.job.queueAll).toHaveBeenCalledWith([
-        { name: JobName.PersonGenerateThumbnail, data: { id: 'person-1' } },
+        { name: JobName.PersonGenerateThumbnail, data: { ownerId: 'owner-id', personGroupId: 'person-1' } },
       ]);
     });
 
@@ -544,12 +557,16 @@ describe(LibraryEditorService.name, () => {
         .exif({ exifImageWidth: 4000, exifImageHeight: 3200, orientation: '1' })
         .edit({ parameters: { x: 0, y: 0, width: 1000, height: 800 } })
         .build();
-      const person = { id: 'person-1', name: 'Alice', faceAssetId: 'x' };
+      const person = { personGroupId: 'person-1', name: 'Alice', faceAssetId: 'x' };
 
       mocks.access.library.checkOwnerAccess.mockResolvedValue(new Set(['library-id']));
       mocks.asset.getById.mockResolvedValue(asset as any);
-      mocks.person.createManualFaceForLibrary.mockResolvedValue({ faceId: 'face-1', needsFeaturePhoto: [] });
-      mocks.person.getById.mockResolvedValue(person as any);
+      mocks.person.createManualFaceForLibrary.mockResolvedValue({
+        ownerId: 'owner-id',
+        faceId: 'face-1',
+        needsFeaturePhoto: [],
+      });
+      mocks.person.getByGroupId.mockResolvedValue(person as any);
 
       await sut.createManualFace(authStub.user1, 'library-id', dto);
 

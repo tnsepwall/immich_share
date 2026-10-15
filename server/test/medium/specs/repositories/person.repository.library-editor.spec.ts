@@ -1,12 +1,12 @@
 import { Kysely } from 'kysely';
-import { AssetVisibility, LibraryUserRole } from 'src/enum';
-import { LoggingRepository } from 'src/repositories/logging.repository';
-import { PersonRepository } from 'src/repositories/person.repository';
-import { DB } from 'src/schema';
-import { BaseService } from 'src/services/base.service';
-import { MediumTestContext, newMediumService } from 'test/medium.factory';
-import { factory } from 'test/small.factory';
-import { getKyselyDB } from 'test/utils';
+import { AssetVisibility, LibraryUserRole } from 'src/enum.js';
+import { LoggingRepository } from 'src/repositories/logging.repository.js';
+import { PersonRepository } from 'src/repositories/person.repository.js';
+import { DB } from 'src/schema/index.js';
+import { BaseService } from 'src/services/base.service.js';
+import { MediumTestContext, newMediumService } from 'test/medium.factory.js';
+import { factory } from 'test/small.factory.js';
+import { getKyselyDB } from 'test/utils.js';
 
 let defaultDatabase: Kysely<DB>;
 
@@ -40,7 +40,7 @@ const newLibraryUser = async (
 };
 
 const getPerson = async (ctx: MediumTestContext, personId: string) =>
-  ctx.database.selectFrom('person').selectAll().where('id', '=', personId).executeTakeFirstOrThrow();
+  ctx.database.selectFrom('person').selectAll().where('personGroupId', '=', personId).executeTakeFirstOrThrow();
 
 const getFace = async (ctx: MediumTestContext, faceId: string) =>
   ctx.database.selectFrom('asset_face').selectAll().where('id', '=', faceId).executeTakeFirstOrThrow();
@@ -87,7 +87,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       expect(result!.needsFeaturePhoto).toEqual([result!.personId]);
 
       const updatedFace = await getFace(ctx, face.id);
-      expect(updatedFace.personId).toBe(result!.personId);
+      expect(updatedFace.personGroupId).toBe(result!.personId);
     });
 
     it('should let an Editor create a person but reject a Viewer', async () => {
@@ -133,7 +133,7 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       // The critical assertion: no orphaned, empty owner-scoped person was left behind.
       expect(after).toBe(before);
       const untouchedFace = await getFace(ctx, faceInScope.id);
-      expect(untouchedFace.personId).toBeNull();
+      expect(untouchedFace.personGroupId).toBeNull();
     });
 
     it('should give an old person who lost their feature face a replacement from their remaining faces', async () => {
@@ -146,19 +146,25 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
         visibility: AssetVisibility.Timeline,
       });
       const { person: oldPerson } = await ctx.newPerson({ ownerId: owner.id });
-      const { assetFace: movingFace } = await ctx.newAssetFace({ assetId: asset.id, personId: oldPerson.id });
-      const { assetFace: remainingFace } = await ctx.newAssetFace({ assetId: asset.id, personId: oldPerson.id });
+      const { assetFace: movingFace } = await ctx.newAssetFace({
+        assetId: asset.id,
+        personGroupId: oldPerson.personGroupId,
+      });
+      const { assetFace: remainingFace } = await ctx.newAssetFace({
+        assetId: asset.id,
+        personGroupId: oldPerson.personGroupId,
+      });
       await ctx.database
         .updateTable('person')
         .set({ faceAssetId: movingFace.id })
-        .where('id', '=', oldPerson.id)
+        .where('personGroupId', '=', oldPerson.personGroupId)
         .execute();
 
       const result = await sut.createPersonForLibrary(library.id, owner.id, 'New', [movingFace.id]);
 
       expect(result).not.toBeNull();
-      expect(result!.needsFeaturePhoto).toEqual(expect.arrayContaining([oldPerson.id, result!.personId]));
-      const updatedOldPerson = await getPerson(ctx, oldPerson.id);
+      expect(result!.needsFeaturePhoto).toEqual(expect.arrayContaining([oldPerson.personGroupId, result!.personId]));
+      const updatedOldPerson = await getPerson(ctx, oldPerson.personGroupId);
       expect(updatedOldPerson.faceAssetId).toBe(remainingFace.id);
     });
   });
@@ -174,10 +180,12 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Old Name' });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.updatePersonNameForLibrary(library.id, owner.id, person.id, 'New Name')).resolves.toBe(true);
-      const updated = await getPerson(ctx, person.id);
+      await expect(
+        sut.updatePersonNameForLibrary(library.id, owner.id, person.personGroupId, 'New Name'),
+      ).resolves.toBe(true);
+      const updated = await getPerson(ctx, person.personGroupId);
       expect(updated.name).toBe('New Name');
     });
 
@@ -192,11 +200,13 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       });
       const { asset: outsideLibrary } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Old Name' });
-      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
-      await ctx.newAssetFace({ assetId: outsideLibrary.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personGroupId: person.personGroupId });
+      await ctx.newAssetFace({ assetId: outsideLibrary.id, personGroupId: person.personGroupId });
 
-      await expect(sut.updatePersonNameForLibrary(library.id, owner.id, person.id, 'New Name')).resolves.toBe(false);
-      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ name: 'Old Name' });
+      await expect(
+        sut.updatePersonNameForLibrary(library.id, owner.id, person.personGroupId, 'New Name'),
+      ).resolves.toBe(false);
+      await expect(getPerson(ctx, person.personGroupId)).resolves.toMatchObject({ name: 'Old Name' });
     });
 
     // Regression test for the security review's L2 finding: a face on a TRASHED (soft-deleted) asset outside
@@ -213,11 +223,13 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { asset: trashedOutside } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       await ctx.softDeleteAsset(trashedOutside.id);
       const { person } = await ctx.newPerson({ ownerId: owner.id, name: 'Old Name' });
-      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
-      await ctx.newAssetFace({ assetId: trashedOutside.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personGroupId: person.personGroupId });
+      await ctx.newAssetFace({ assetId: trashedOutside.id, personGroupId: person.personGroupId });
 
-      await expect(sut.updatePersonNameForLibrary(library.id, owner.id, person.id, 'New Name')).resolves.toBe(false);
-      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ name: 'Old Name' });
+      await expect(
+        sut.updatePersonNameForLibrary(library.id, owner.id, person.personGroupId, 'New Name'),
+      ).resolves.toBe(false);
+      await expect(getPerson(ctx, person.personGroupId)).resolves.toMatchObject({ name: 'Old Name' });
     });
 
     it('should reject a Viewer', async () => {
@@ -232,9 +244,11 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.updatePersonNameForLibrary(library.id, viewer.id, person.id, 'New Name')).resolves.toBe(false);
+      await expect(
+        sut.updatePersonNameForLibrary(library.id, viewer.id, person.personGroupId, 'New Name'),
+      ).resolves.toBe(false);
     });
   });
 
@@ -252,23 +266,26 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { person: oldPerson } = await ctx.newPerson({ ownerId: owner.id });
       // assignFacesForLibrary can only target a person already reachable through this library (i.e. one
       // getAllForLibrary would already show) - establish that via an existing, unrelated face.
-      await ctx.newAssetFace({ assetId: asset.id, personId: target.id });
-      const { assetFace: movingFace } = await ctx.newAssetFace({ assetId: asset.id, personId: oldPerson.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: target.personGroupId });
+      const { assetFace: movingFace } = await ctx.newAssetFace({
+        assetId: asset.id,
+        personGroupId: oldPerson.personGroupId,
+      });
       await ctx.database
         .updateTable('person')
         .set({ faceAssetId: movingFace.id })
-        .where('id', '=', oldPerson.id)
+        .where('personGroupId', '=', oldPerson.personGroupId)
         .execute();
 
-      const result = await sut.assignFacesForLibrary(library.id, owner.id, target.id, [movingFace.id]);
+      const result = await sut.assignFacesForLibrary(library.id, owner.id, target.personGroupId, [movingFace.id]);
 
       // movingFace was oldPerson's ONLY face, so once it moves away oldPerson has nothing left to pick a
       // replacement from - they're dropped from needsFeaturePhoto (no job queued) and their faceAssetId is
       // left stale, mirroring the existing owner-flow PersonService.createNewFeaturePhoto behavior exactly
       // when getRandomFace finds nothing.
-      expect(result).toEqual({ needsFeaturePhoto: [target.id] });
-      await expect(getFace(ctx, movingFace.id)).resolves.toMatchObject({ personId: target.id });
-      await expect(getPerson(ctx, oldPerson.id)).resolves.toMatchObject({ faceAssetId: movingFace.id });
+      expect(result).toEqual({ ownerId: owner.id, needsFeaturePhoto: [target.personGroupId] });
+      await expect(getFace(ctx, movingFace.id)).resolves.toMatchObject({ personGroupId: target.personGroupId });
+      await expect(getPerson(ctx, oldPerson.personGroupId)).resolves.toMatchObject({ faceAssetId: movingFace.id });
     });
 
     it('should reject when a face is not in this library', async () => {
@@ -282,10 +299,12 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       });
       const { asset: outOfScope } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person: target } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: inLibrary.id, personId: target.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personGroupId: target.personGroupId });
       const { assetFace: outOfScopeFace } = await ctx.newAssetFace({ assetId: outOfScope.id });
 
-      await expect(sut.assignFacesForLibrary(library.id, owner.id, target.id, [outOfScopeFace.id])).resolves.toBeNull();
+      await expect(
+        sut.assignFacesForLibrary(library.id, owner.id, target.personGroupId, [outOfScopeFace.id]),
+      ).resolves.toBeNull();
     });
 
     it('should reject when the target person is not reachable through this library', async () => {
@@ -300,9 +319,11 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { assetFace: face } = await ctx.newAssetFace({ assetId: asset.id });
       const { person: elsewhere } = await ctx.newPerson({ ownerId: owner.id });
       const { asset: elsewhereAsset } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
-      await ctx.newAssetFace({ assetId: elsewhereAsset.id, personId: elsewhere.id });
+      await ctx.newAssetFace({ assetId: elsewhereAsset.id, personGroupId: elsewhere.personGroupId });
 
-      await expect(sut.assignFacesForLibrary(library.id, owner.id, elsewhere.id, [face.id])).resolves.toBeNull();
+      await expect(
+        sut.assignFacesForLibrary(library.id, owner.id, elsewhere.personGroupId, [face.id]),
+      ).resolves.toBeNull();
     });
   });
 
@@ -328,16 +349,16 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { person } = await ctx.newPerson({ ownerId: owner.id });
       // createManualFaceForLibrary can only target a person already reachable through this library -
       // establish that via an existing, unrelated face (not the person's feature photo).
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      const result = await sut.createManualFaceForLibrary(library.id, owner.id, person.id, asset.id, box);
+      const result = await sut.createManualFaceForLibrary(library.id, owner.id, person.personGroupId, asset.id, box);
 
       expect(result).not.toBeNull();
-      expect(result!.needsFeaturePhoto).toEqual([person.id]);
+      expect(result!.needsFeaturePhoto).toEqual([person.personGroupId]);
       const face = await getFace(ctx, result!.faceId);
       expect(face.assetId).toBe(asset.id);
-      expect(face.personId).toBe(person.id);
-      await expect(getPerson(ctx, person.id)).resolves.toMatchObject({ faceAssetId: result!.faceId });
+      expect(face.personGroupId).toBe(person.personGroupId);
+      await expect(getPerson(ctx, person.personGroupId)).resolves.toMatchObject({ faceAssetId: result!.faceId });
     });
 
     // Regression test for the security review's H1 finding: createManualFace previously checked only
@@ -360,10 +381,10 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       const { person } = await ctx.newPerson({ ownerId: owner.id });
       // Establish person as already reachable through this library via an unrelated Timeline asset, so the
       // rejection below is unambiguously about the archived asset, not the person.
-      await ctx.newAssetFace({ assetId: timeline.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: timeline.id, personGroupId: person.personGroupId });
 
       await expect(
-        sut.createManualFaceForLibrary(library.id, owner.id, person.id, archived.id, box),
+        sut.createManualFaceForLibrary(library.id, owner.id, person.personGroupId, archived.id, box),
       ).resolves.toBeNull();
     });
 
@@ -383,9 +404,11 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       });
       await ctx.softDeleteAsset(asset.id);
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: timeline.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: timeline.id, personGroupId: person.personGroupId });
 
-      await expect(sut.createManualFaceForLibrary(library.id, owner.id, person.id, asset.id, box)).resolves.toBeNull();
+      await expect(
+        sut.createManualFaceForLibrary(library.id, owner.id, person.personGroupId, asset.id, box),
+      ).resolves.toBeNull();
     });
 
     it('should reject creating a face on an asset in a different library', async () => {
@@ -404,9 +427,11 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: assetInLib1.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: assetInLib1.id, personGroupId: person.personGroupId });
 
-      await expect(sut.createManualFaceForLibrary(library1.id, owner.id, person.id, asset.id, box)).resolves.toBeNull();
+      await expect(
+        sut.createManualFaceForLibrary(library1.id, owner.id, person.personGroupId, asset.id, box),
+      ).resolves.toBeNull();
     });
 
     it('should reject when the person is not reachable through this library', async () => {
@@ -420,10 +445,10 @@ describe(`${PersonRepository.name} library editor transactional primitives`, () 
       });
       const { person: elsewhere } = await ctx.newPerson({ ownerId: owner.id });
       const { asset: elsewhereAsset } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
-      await ctx.newAssetFace({ assetId: elsewhereAsset.id, personId: elsewhere.id });
+      await ctx.newAssetFace({ assetId: elsewhereAsset.id, personGroupId: elsewhere.personGroupId });
 
       await expect(
-        sut.createManualFaceForLibrary(library.id, owner.id, elsewhere.id, asset.id, box),
+        sut.createManualFaceForLibrary(library.id, owner.id, elsewhere.personGroupId, asset.id, box),
       ).resolves.toBeNull();
     });
   });

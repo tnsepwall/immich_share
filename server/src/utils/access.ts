@@ -1,9 +1,11 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
-import { AuthSharedLink } from 'src/database';
-import { AuthDto } from 'src/dtos/auth.dto';
-import { AlbumUserRole, Permission } from 'src/enum';
-import { AccessRepository } from 'src/repositories/access.repository';
-import { areSetsEqual, isSetSuperset, setDifference, setUnion } from 'src/utils/set';
+import { AuthSharedLink } from 'src/database.js';
+import { AuthDto } from 'src/dtos/auth.dto.js';
+import { PersonUserRole } from 'src/dtos/person.dto.js';
+import { AlbumUserRole, Permission } from 'src/enum.js';
+import { AccessRepository } from 'src/repositories/access.repository.js';
+import { PersonId } from 'src/repositories/person.repository.js';
+import { areSetsEqual, isSetSuperset, setDifference, setUnion } from 'src/utils/set.js';
 
 export type GrantedRequest = {
   requested: Permission[];
@@ -24,6 +26,12 @@ export type AccessRequest = {
   ids: Set<string> | string[];
 };
 
+export type AccessPersonRequest = {
+  auth: AuthDto;
+  permission: Permission;
+  ids: Set<PersonId> | PersonId[];
+};
+
 type SharedLinkAccessRequest = { sharedLink: AuthSharedLink; permission: Permission; ids: Set<string> };
 type OtherAccessRequest = { auth: AuthDto; permission: Permission; ids: Set<string> };
 
@@ -38,6 +46,92 @@ export const requireAccess = async (access: AccessRepository, request: AccessReq
   const allowedIds = await checkAccess(access, request);
   if (!areSetsEqual(new Set(request.ids), allowedIds)) {
     throw new BadRequestException(`Not found or no ${request.permission} access`);
+  }
+};
+
+const PERSON_READ_ROLES = [PersonUserRole.Read, PersonUserRole.Write, PersonUserRole.Admin];
+const PERSON_WRITE_ROLES = [PersonUserRole.Write, PersonUserRole.Admin];
+const PERSON_ADMIN_ROLES = [PersonUserRole.Admin];
+
+const personAccessKey = (item: PersonId) => `${item.personGroupId}/$${item.ownerId}`;
+
+const asStringSet = (source: Set<PersonId>): Set<string> => new Set(source.values().map(personAccessKey));
+
+export const requirePersonAccess = async (access: AccessRepository, request: AccessPersonRequest) => {
+  const allowedIds = await checkPersonAccess(access, request);
+  if (!areSetsEqual(asStringSet(new Set(request.ids)), asStringSet(allowedIds))) {
+    throw new BadRequestException(`Not found or no ${request.permission} access`);
+  }
+};
+
+/**
+ * Fork (shared libraries Phase 5 §5.8): person ids used as FILTERS (search, timeline) are person GROUP ids.
+ * One is readable when the caller has their own row in the group (owned, or shared to them via person_user)
+ * or the group is reachable through a library shared with them in their timeline.
+ */
+export const requirePersonGroupReadAccess = async (access: AccessRepository, auth: AuthDto, ids: string[]) => {
+  if (ids.length === 0) {
+    return;
+  }
+
+  const own = await checkPersonAccess(access, {
+    auth,
+    permission: Permission.PersonRead,
+    ids: ids.map((personGroupId) => ({ personGroupId, ownerId: auth.user.id })),
+  });
+  const ownIds = new Set(own.values().map(({ personGroupId }) => personGroupId));
+  const missing = new Set(ids.filter((id) => !ownIds.has(id)));
+  if (missing.size === 0) {
+    return;
+  }
+
+  const viaSharedLibrary = await access.person.checkSharedLibraryPersonGroupAccess(auth.user.id, missing);
+  if (viaSharedLibrary.size !== missing.size) {
+    throw new BadRequestException(`Not found or no ${Permission.PersonRead} access`);
+  }
+};
+
+export const checkPersonAccess = async (
+  access: AccessRepository,
+  { ids, auth, permission }: AccessPersonRequest,
+): Promise<Set<PersonId>> => {
+  const idSet = Array.isArray(ids) ? new Set(ids) : ids;
+  if (idSet.size === 0) {
+    return new Set<PersonId>();
+  }
+
+  switch (permission) {
+    // Fork (shared libraries Phase 5 §5.1): PersonRead additionally admits the library OWNER's person row for
+    // a person reachable through a library shared with the caller (inTimeline=true). This is the only person
+    // permission a shared-library recipient may satisfy - update/delete/merge stay on upstream's
+    // owner + person_user role checks below and must never be widened to library reachability.
+    case Permission.PersonRead: {
+      const allowed = await access.person.checkAccess(auth.user.id, idSet, PERSON_READ_ROLES);
+      const allowedKeys = asStringSet(allowed);
+      // the caller's own rows can't be reached "through a library shared with them", so they never need the query
+      const remaining = new Set(
+        idSet.values().filter((id) => id.ownerId !== auth.user.id && !allowedKeys.has(personAccessKey(id))),
+      );
+      if (remaining.size === 0) {
+        return allowed;
+      }
+      const remainingKeys = asStringSet(remaining);
+      const viaSharedLibrary = await access.person.checkSharedLibraryPersonAccess(auth.user.id, remaining);
+      return new Set([...allowed, ...viaSharedLibrary.values().filter((id) => remainingKeys.has(personAccessKey(id)))]);
+    }
+
+    case Permission.PersonUpdate: {
+      return access.person.checkAccess(auth.user.id, idSet, PERSON_WRITE_ROLES);
+    }
+
+    case Permission.PersonDelete:
+    case Permission.PersonMerge: {
+      return access.person.checkAccess(auth.user.id, idSet, PERSON_ADMIN_ROLES);
+    }
+
+    default: {
+      return new Set();
+    }
   }
 };
 
@@ -130,6 +224,10 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return setUnion(isOwner, isPartner);
     }
 
+    case Permission.AssetFileDownload: {
+      return access.assetFile.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
+    }
+
     case Permission.AssetView: {
       const isOwner = await access.asset.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
       const isAlbum = await access.asset.checkAlbumAccess(auth.user.id, setDifference(ids, isOwner));
@@ -174,6 +272,11 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
 
     case Permission.AssetEditDelete: {
       return await access.asset.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
+    }
+
+    case Permission.AssetFileRead:
+    case Permission.AssetFileDelete: {
+      return await access.assetFile.checkOwnerAccess(auth.user.id, ids, auth.session?.hasElevatedPermission);
     }
 
     case Permission.AlbumRead: {
@@ -358,33 +461,33 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
       return access.person.checkFaceOwnerAccess(auth.user.id, ids);
     }
 
-    // Phase 5 (§5, SECURITY PREREQUISITE): PersonRead is split from PersonUpdate/Delete/Merge below -
-    // this is the ONLY person permission a shared-library recipient may ever satisfy, and only for
-    // persons reachable through a library shared with them with inTimeline=true (§5.1). Widening this
-    // case must never be merged back with the mutation cases below.
-    case Permission.PersonRead: {
-      const isOwner = await access.person.checkOwnerAccess(auth.user.id, ids);
-      const isSharedLibraryReachable = await access.person.checkSharedLibraryPersonAccess(
-        auth.user.id,
-        setDifference(ids, isOwner),
-      );
-      return setUnion(isOwner, isSharedLibraryReachable);
-    }
-
-    // Owner-only, deliberately NOT widened to shared-library reachability - rename/delete/merge remain
-    // account-owner actions regardless of how a sharee reached this person via PersonRead above.
-    case Permission.PersonUpdate:
-    case Permission.PersonDelete:
-    case Permission.PersonMerge: {
-      return await access.person.checkOwnerAccess(auth.user.id, ids);
-    }
-
     case Permission.PersonReassign: {
       return access.person.checkFaceOwnerAccess(auth.user.id, ids);
     }
 
+    case Permission.ClusterGroupRead: {
+      const isMember = await access.clusterGroup.checkOwnerAccess(auth.user.id, ids);
+      const isInvited = await access.clusterGroup.checkInviteAccess(auth.user.id, setDifference(ids, isMember));
+      return setUnion(isMember, isInvited);
+    }
+
+    case Permission.ClusterGroupLeave:
+    case Permission.ClusterGroupRequestCreate: {
+      return access.clusterGroup.checkOwnerAccess(auth.user.id, ids);
+    }
+
+    case Permission.ClusterGroupRequestDelete: {
+      const isOwner = await access.clusterGroupRequest.checkOwnerAccess(auth.user.id, ids);
+      const isGroupMember = await access.clusterGroupRequest.checkGroupAccess(auth.user.id, ids);
+      return setUnion(isOwner, isGroupMember);
+    }
+
+    case Permission.ClusterGroupRequestRead: {
+      return access.clusterGroupRequest.checkOwnerAccess(auth.user.id, ids);
+    }
+
     case Permission.PartnerUpdate: {
-      return await access.partner.checkUpdateAccess(auth.user.id, ids);
+      return access.partner.checkUpdateAccess(auth.user.id, ids);
     }
 
     case Permission.SessionRead:
@@ -408,7 +511,8 @@ const checkOtherAccess = async (access: AccessRepository, request: OtherAccessRe
 
     case Permission.WorkflowRead:
     case Permission.WorkflowUpdate:
-    case Permission.WorkflowDelete: {
+    case Permission.WorkflowDelete:
+    case Permission.WorkflowLogs: {
       return access.workflow.checkOwnerAccess(auth.user.id, ids);
     }
 

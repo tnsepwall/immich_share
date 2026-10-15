@@ -1,12 +1,12 @@
 import { Kysely } from 'kysely';
-import { AssetVisibility, LibraryUserRole } from 'src/enum';
-import { AccessRepository } from 'src/repositories/access.repository';
-import { LoggingRepository } from 'src/repositories/logging.repository';
-import { DB } from 'src/schema';
-import { BaseService } from 'src/services/base.service';
-import { MediumTestContext, newMediumService } from 'test/medium.factory';
-import { factory } from 'test/small.factory';
-import { getKyselyDB } from 'test/utils';
+import { AssetVisibility, LibraryUserRole } from 'src/enum.js';
+import { AccessRepository } from 'src/repositories/access.repository.js';
+import { LoggingRepository } from 'src/repositories/logging.repository.js';
+import { DB } from 'src/schema/index.js';
+import { BaseService } from 'src/services/base.service.js';
+import { MediumTestContext, newMediumService } from 'test/medium.factory.js';
+import { factory } from 'test/small.factory.js';
+import { getKyselyDB } from 'test/utils.js';
 
 let defaultDatabase: Kysely<DB>;
 
@@ -342,10 +342,10 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.id]))).resolves.toEqual(
-        new Set([person.id]),
+      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.personGroupId]))).resolves.toEqual(
+        new Set([person.personGroupId]),
       );
     });
 
@@ -355,9 +355,11 @@ describe(AccessRepository.name, () => {
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
       const { asset } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.id]))).resolves.toEqual(new Set());
+      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.personGroupId]))).resolves.toEqual(
+        new Set(),
+      );
     });
 
     it('should exclude a person with no faces at all', async () => {
@@ -366,7 +368,9 @@ describe(AccessRepository.name, () => {
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
 
-      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.id]))).resolves.toEqual(new Set());
+      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.personGroupId]))).resolves.toEqual(
+        new Set(),
+      );
     });
 
     it('should exclude a person whose only library face is on a non-timeline (archived) asset', async () => {
@@ -379,9 +383,11 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Archive,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.id]))).resolves.toEqual(new Set());
+      await expect(sut.person.checkLibraryPersonScope(library.id, new Set([person.personGroupId]))).resolves.toEqual(
+        new Set(),
+      );
     });
   });
 
@@ -401,10 +407,10 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: assetA.id, personId: person.id });
-      await ctx.newAssetFace({ assetId: assetB.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: assetA.id, personGroupId: person.personGroupId });
+      await ctx.newAssetFace({ assetId: assetB.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.id)).resolves.toBe(true);
+      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.personGroupId)).resolves.toBe(true);
     });
 
     it('should return false when the person also has a face outside the library', async () => {
@@ -418,10 +424,10 @@ describe(AccessRepository.name, () => {
       });
       const { asset: outsideLibrary } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
-      await ctx.newAssetFace({ assetId: outsideLibrary.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personGroupId: person.personGroupId });
+      await ctx.newAssetFace({ assetId: outsideLibrary.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.id)).resolves.toBe(false);
+      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.personGroupId)).resolves.toBe(false);
     });
 
     it('should return false when the person has no faces in this library at all', async () => {
@@ -430,9 +436,9 @@ describe(AccessRepository.name, () => {
       const { library } = await newLibrary(ctx, { ownerId: owner.id });
       const { asset: outsideLibrary } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: outsideLibrary.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: outsideLibrary.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.id)).resolves.toBe(false);
+      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.personGroupId)).resolves.toBe(false);
     });
 
     it('should ignore a soft-deleted face outside the library when deciding exclusivity', async () => {
@@ -446,10 +452,10 @@ describe(AccessRepository.name, () => {
       });
       const { asset: outsideLibrary } = await ctx.newAsset({ ownerId: owner.id, visibility: AssetVisibility.Timeline });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: inLibrary.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: inLibrary.id, personGroupId: person.personGroupId });
       const { assetFace: deletedOutsideFace } = await ctx.newAssetFace({
         assetId: outsideLibrary.id,
-        personId: person.id,
+        personGroupId: person.personGroupId,
       });
       await ctx.database
         .updateTable('asset_face')
@@ -457,7 +463,7 @@ describe(AccessRepository.name, () => {
         .where('id', '=', deletedOutsideFace.id)
         .execute();
 
-      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.id)).resolves.toBe(true);
+      await expect(sut.person.checkPersonExclusiveToLibrary(library.id, person.personGroupId)).resolves.toBe(true);
     });
   });
 
@@ -484,11 +490,14 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
-        new Set([person.id]),
-      );
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]));
     });
 
     it('should exclude a person reachable only via an inTimeline=false share', async () => {
@@ -508,11 +517,14 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set());
     });
 
     it('should exclude a person reachable through a DIFFERENT library not shared with this caller', async () => {
@@ -533,11 +545,14 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set());
     });
 
     it('should exclude a stranger with no share at all', async () => {
@@ -551,11 +566,14 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkSharedLibraryPersonAccess(stranger.id, new Set([person.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          stranger.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set());
     });
 
     // Review finding (plan §5.3): a person the owner has HIDDEN must be excluded from every
@@ -578,17 +596,84 @@ describe(AccessRepository.name, () => {
         visibility: AssetVisibility.Timeline,
       });
       const { person } = await ctx.newPerson({ ownerId: owner.id, isHidden: true });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
-      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
-        new Set(),
-      );
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set());
 
       // sanity check: un-hiding the person restores reachability, proving isHidden was the only gate
-      await ctx.database.updateTable('person').set({ isHidden: false }).where('id', '=', person.id).execute();
-      await expect(sut.person.checkSharedLibraryPersonAccess(sharee.id, new Set([person.id]))).resolves.toEqual(
-        new Set([person.id]),
-      );
+      await ctx.database
+        .updateTable('person')
+        .set({ isHidden: false })
+        .where('personGroupId', '=', person.personGroupId)
+        .execute();
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set([{ ownerId: person.ownerId, personGroupId: person.personGroupId }]));
+    });
+
+    it('should resolve the same reachability by person group id', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      const { person: unreachable } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
+
+      await expect(
+        sut.person.checkSharedLibraryPersonGroupAccess(
+          sharee.id,
+          new Set([person.personGroupId, unreachable.personGroupId]),
+        ),
+      ).resolves.toEqual(new Set([person.personGroupId]));
+    });
+
+    // v3.3 person model: only the library OWNER's row of the group is reachable - asking for the
+    // sharee's own (ownerId = sharee) key of the same group must not be granted through the library.
+    it('should not grant a row of the group owned by someone other than the library owner', async () => {
+      const { ctx, sut } = setup();
+      const { user: owner } = await ctx.newUser();
+      const { user: sharee } = await ctx.newUser();
+      const { library } = await newLibrary(ctx, { ownerId: owner.id });
+      await newLibraryUser(ctx, {
+        libraryId: library.id,
+        userId: sharee.id,
+        role: LibraryUserRole.Viewer,
+        inTimeline: true,
+      });
+      const { asset } = await ctx.newAsset({
+        ownerId: owner.id,
+        libraryId: library.id,
+        visibility: AssetVisibility.Timeline,
+      });
+      const { person } = await ctx.newPerson({ ownerId: owner.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
+
+      await expect(
+        sut.person.checkSharedLibraryPersonAccess(
+          sharee.id,
+          new Set([{ ownerId: sharee.id, personGroupId: person.personGroupId }]),
+        ),
+      ).resolves.toEqual(new Set());
     });
   });
 

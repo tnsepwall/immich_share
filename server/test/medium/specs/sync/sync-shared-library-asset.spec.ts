@@ -1,10 +1,10 @@
 import { Kysely } from 'kysely';
-import { AssetVisibility, SyncEntityType, SyncRequestType } from 'src/enum';
-import { AssetRepository } from 'src/repositories/asset.repository';
-import { LibraryRepository } from 'src/repositories/library.repository';
-import { DB } from 'src/schema';
-import { SyncTestContext } from 'test/medium.factory';
-import { getKyselyDB, wait } from 'test/utils';
+import { AssetVisibility, SyncEntityType, SyncRequestType } from 'src/enum.js';
+import { AssetRepository } from 'src/repositories/asset.repository.js';
+import { LibraryRepository } from 'src/repositories/library.repository.js';
+import { DB } from 'src/schema/index.js';
+import { SyncTestContext } from 'test/medium.factory.js';
+import { getKyselyDB, wait } from 'test/utils.js';
 
 // Phase 6: mobile pseudo-partner projection - flagged shared-library assets ride the EXISTING
 // PartnerAssetV2/PartnerAssetBackfillV2/PartnerAssetDeleteV1 wire types (sync.service.ts's

@@ -1,19 +1,19 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Library } from 'src/database';
-import { AuthDto } from 'src/dtos/auth.dto';
-import { TimeBucketAssetDto, TimeBucketDto, TimeBucketsResponseDto } from 'src/dtos/time-bucket.dto';
-import { AssetVisibility, Permission } from 'src/enum';
-import { TimeBucketOptions } from 'src/repositories/asset.repository';
-import { BaseService } from 'src/services/base.service';
-import { requireElevatedPermission } from 'src/utils/access';
-import { getMyPartnerIds } from 'src/utils/asset.util';
+import { Library } from 'src/database.js';
+import { AuthDto } from 'src/dtos/auth.dto.js';
+import { TimeBucketAssetDto, TimeBucketDto, TimeBucketsResponseDto } from 'src/dtos/time-bucket.dto.js';
+import { AssetVisibility, Permission } from 'src/enum.js';
+import { TimeBucketOptions } from 'src/repositories/asset.repository.js';
+import { BaseService } from 'src/services/base.service.js';
+import { requireElevatedPermission } from 'src/utils/access.js';
+import { getMyPartnerIds } from 'src/utils/asset.util.js';
 
 @Injectable()
 export class TimelineService extends BaseService {
   async getTimeBuckets(auth: AuthDto, dto: TimeBucketDto): Promise<TimeBucketsResponseDto[]> {
     const library = await this.timeBucketChecks(auth, dto);
     const timeBucketOptions = await this.buildTimeBucketOptions(auth, dto, library);
-    return await this.assetRepository.getTimeBuckets(timeBucketOptions);
+    return await this.assetRepository.getTimeBuckets(timeBucketOptions, auth);
   }
 
   // pre-jsonified response
@@ -44,7 +44,7 @@ export class TimelineService extends BaseService {
         const partnerIds = await getMyPartnerIds({
           userId: auth.user.id,
           repository: this.partnerRepository,
-          timelineEnabled: true,
+          timelineEnabled: !options.personId || undefined,
         });
         userIds.push(...partnerIds);
       }
@@ -127,7 +127,7 @@ export class TimelineService extends BaseService {
     // can enter scope via withSharedLibraries, an explicitly-supplied person id becomes a probing
     // oracle. Reject an id the caller can't read.
     if (dto.personId) {
-      await this.requireAccess({ auth, permission: Permission.PersonRead, ids: [dto.personId] });
+      await this.requirePersonGroupReadAccess(auth, [dto.personId]);
     }
 
     if (auth.sharedLink && !auth.sharedLink.showExif) {

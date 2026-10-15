@@ -1,13 +1,13 @@
 import { Kysely } from 'kysely';
-import { SyncEntityType, SyncRequestType } from 'src/enum';
-import { LibraryRepository } from 'src/repositories/library.repository';
-import { PartnerRepository } from 'src/repositories/partner.repository';
-import { SessionRepository } from 'src/repositories/session.repository';
-import { SyncRepository } from 'src/repositories/sync.repository';
-import { DB } from 'src/schema';
-import { maybeResetForSharedLibraryTransition } from 'src/utils/shared-library-sync';
-import { SyncTestContext } from 'test/medium.factory';
-import { getKyselyDB } from 'test/utils';
+import { SyncEntityType, SyncRequestType } from 'src/enum.js';
+import { LibraryRepository } from 'src/repositories/library.repository.js';
+import { PartnerRepository } from 'src/repositories/partner.repository.js';
+import { SessionRepository } from 'src/repositories/session.repository.js';
+import { SyncRepository } from 'src/repositories/sync.repository.js';
+import { DB } from 'src/schema/index.js';
+import { maybeResetForSharedLibraryTransition } from 'src/utils/shared-library-sync.js';
+import { SyncTestContext } from 'test/medium.factory.js';
+import { getKyselyDB } from 'test/utils.js';
 
 // Phase 6: mobile pseudo-partner projection. Each library owner O with >=1 library shared to user U
 // where library_user.inTimeline = true is presented to U's sync stream as a pseudo SyncPartnerV1,

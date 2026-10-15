@@ -1,8 +1,8 @@
-import { Permission } from 'src/enum';
-import { AccessRepository } from 'src/repositories/access.repository';
-import { checkAccess } from 'src/utils/access';
-import { newAccessRepositoryMock } from 'test/repositories/access.repository.mock';
-import { factory } from 'test/small.factory';
+import { Permission } from 'src/enum.js';
+import { AccessRepository } from 'src/repositories/access.repository.js';
+import { checkAccess } from 'src/utils/access.js';
+import { newAccessRepositoryMock } from 'test/repositories/access.repository.mock.js';
+import { factory } from 'test/small.factory.js';
 
 describe('checkAccess', () => {
   describe(Permission.LibraryAssetUpdate, () => {

@@ -1,5 +1,5 @@
-import { AuthSession } from 'src/database';
-import { AuthDto } from 'src/dtos/auth.dto';
+import { AuthSession } from 'src/database.js';
+import { AuthDto } from 'src/dtos/auth.dto.js';
 
 const authUser = {
   admin: {
@@ -28,6 +28,7 @@ export const authStub = {
       id: 'token-id',
     } as AuthSession,
   }),
+  // fork (shared libraries specs): a second, non-admin user - upstream dropped it, the library specs still need one
   user2: Object.freeze<AuthDto>({
     user: {
       id: 'user-2',

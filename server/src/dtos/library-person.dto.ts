@@ -1,8 +1,7 @@
 import { Selectable } from 'kysely';
 import { createZodDto } from 'nestjs-zod';
-import { AssetFaceTable } from 'src/schema/tables/asset-face.table';
-import { PersonTable } from 'src/schema/tables/person.table';
 import z from 'zod';
+import { AssetFaceTable } from 'src/schema/tables/asset-face.table.js';
 
 // Library Editor person/face curation surface. Scoped so an Editor can only ever see or touch
 // people and faces reachable through faces on assets inside the library they're editing - never
@@ -157,7 +156,8 @@ const LibraryManualFaceSchema = z
 
 export class LibraryManualFaceDto extends createZodDto(LibraryManualFaceSchema) {}
 
-type LibraryPersonRow = Pick<Selectable<PersonTable>, 'id' | 'name'> & {
+// `id` is the person group id (upstream v3.3 person model)
+type LibraryPersonRow = { id: string; name: string } & {
   thumbnailFace: {
     faceId: string;
     assetId: string;

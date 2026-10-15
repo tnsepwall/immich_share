@@ -1,14 +1,14 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
-import { Endpoint, HistoryBuilder } from 'src/decorators';
-import { AssetResponseDto } from 'src/dtos/asset-response.dto';
-import { AuthDto } from 'src/dtos/auth.dto';
+import { Endpoint, HistoryBuilder } from 'src/decorators.js';
+import { AssetResponseDto } from 'src/dtos/asset-response.dto.js';
+import { type AuthDto } from 'src/dtos/auth.dto.js';
 import {
   LibraryAssetBulkUpdateDto,
   LibraryAssetBulkUpdateParams,
   LibraryAssetUpdateDto,
   LibraryAssetUpdateParams,
-} from 'src/dtos/library-editor.dto';
+} from 'src/dtos/library-editor.dto.js';
 import {
   LibraryFaceAssignDto,
   LibraryFaceResponseDto,
@@ -20,25 +20,25 @@ import {
   LibraryPersonParams,
   LibraryPersonResponseDto,
   LibraryPersonUpdateDto,
-} from 'src/dtos/library-person.dto';
+} from 'src/dtos/library-person.dto.js';
 import {
   CreateLibraryDto,
   LibraryResponseDto,
   LibraryStatsResponseDto,
   LibraryUserResponseDto,
-  LibraryUsersDto,
   LibraryUserSelfUpdateDto,
   LibraryUserUpdateDto,
+  LibraryUsersDto,
   SharedLibraryResponseDto,
   UpdateLibraryDto,
   ValidateLibraryDto,
   ValidateLibraryResponseDto,
-} from 'src/dtos/library.dto';
-import { ApiTag, Permission } from 'src/enum';
-import { Auth, Authenticated } from 'src/middleware/auth.guard';
-import { LibraryEditorService } from 'src/services/library-editor.service';
-import { LibraryService } from 'src/services/library.service';
-import { ParseMeUUIDPipe, UUIDParamDto } from 'src/validation';
+} from 'src/dtos/library.dto.js';
+import { ApiTag, Permission } from 'src/enum.js';
+import { Auth, Authenticated } from 'src/middleware/auth.guard.js';
+import { LibraryEditorService } from 'src/services/library-editor.service.js';
+import { LibraryService } from 'src/services/library.service.js';
+import { ParseMeUUIDPipe, UUIDParamDto } from 'src/validation.js';
 
 @ApiTags(ApiTag.Libraries)
 @Controller('libraries')

@@ -24,11 +24,12 @@
 
   type Props = {
     onClose: (albums?: AlbumResponseDto[]) => void;
+    selectedItemsCount?: number;
     /** See AssetAddToAlbumModal.svelte's prop of the same name. */
     restrictToOwnedAlbums?: boolean;
   };
 
-  let { onClose, restrictToOwnedAlbums = false }: Props = $props();
+  let { onClose, selectedItemsCount, restrictToOwnedAlbums = false }: Props = $props();
 
   onMount(async () => {
     const allAlbums = await getAllAlbums({});
@@ -160,9 +161,15 @@
       }
     }
   };
+
+  const title = $derived(
+    selectedItemsCount === undefined
+      ? $t('select_albums')
+      : $t('add_to_album_item_count', { values: { count: selectedItemsCount } }),
+  );
 </script>
 
-<Modal title={$t('add_to_album')} {onClose} size="small">
+<Modal {title} {onClose} size="small">
   <ModalBody>
     <div class="mb-2 flex max-h-100 flex-col">
       {#if loading}

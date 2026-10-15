@@ -1,17 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 import { Kysely } from 'kysely';
-import { AssetVisibility, LibraryUserRole, SharedLinkType } from 'src/enum';
-import { AccessRepository } from 'src/repositories/access.repository';
-import { AssetRepository } from 'src/repositories/asset.repository';
-import { LibraryRepository } from 'src/repositories/library.repository';
-import { LoggingRepository } from 'src/repositories/logging.repository';
-import { PartnerRepository } from 'src/repositories/partner.repository';
-import { SharedLinkRepository } from 'src/repositories/shared-link.repository';
-import { DB } from 'src/schema';
-import { TimelineService } from 'src/services/timeline.service';
-import { MediumTestContext, newMediumService } from 'test/medium.factory';
-import { factory } from 'test/small.factory';
-import { getKyselyDB } from 'test/utils';
+import { AssetVisibility, LibraryUserRole, SharedLinkType } from 'src/enum.js';
+import { AccessRepository } from 'src/repositories/access.repository.js';
+import { AssetRepository } from 'src/repositories/asset.repository.js';
+import { LibraryRepository } from 'src/repositories/library.repository.js';
+import { LoggingRepository } from 'src/repositories/logging.repository.js';
+import { PartnerRepository } from 'src/repositories/partner.repository.js';
+import { SharedLinkRepository } from 'src/repositories/shared-link.repository.js';
+import { DB } from 'src/schema/index.js';
+import { TimelineService } from 'src/services/timeline.service.js';
+import { MediumTestContext, newMediumService } from 'test/medium.factory.js';
+import { factory } from 'test/small.factory.js';
+import { getKyselyDB } from 'test/utils.js';
 
 let defaultDatabase: Kysely<DB>;
 
@@ -504,14 +504,14 @@ describe(TimelineService.name, () => {
         localDateTime: new Date('1970-02-12'),
       });
       await ctx.newExif({ assetId: asset.id, make: 'Canon' });
-      await ctx.newAssetFace({ assetId: asset.id, personId: person.id });
+      await ctx.newAssetFace({ assetId: asset.id, personGroupId: person.personGroupId });
 
       const auth = factory.auth({ user: { id: sharee.id } });
       const rawResponse = await sut.getTimeBucket(auth, {
         timeBucket: '1970-02-01',
         visibility: AssetVisibility.Timeline,
         withSharedLibraries: true,
-        personId: person.id,
+        personId: person.personGroupId,
       });
       const response = JSON.parse(rawResponse);
       expect(response.id).toEqual([asset.id]);

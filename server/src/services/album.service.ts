@@ -2,25 +2,26 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   AddUsersDto,
   AlbumResponseDto,
+  AlbumStatisticsResponseDto,
   AlbumsAddAssetsDto,
   AlbumsAddAssetsResponseDto,
-  AlbumStatisticsResponseDto,
   CreateAlbumDto,
   GetAlbumsDto,
-  mapAlbum,
   UpdateAlbumDto,
   UpdateAlbumUserDto,
-} from 'src/dtos/album.dto';
-import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto';
-import { AuthDto } from 'src/dtos/auth.dto';
-import { MapMarkerResponseDto } from 'src/dtos/map.dto';
-import { AlbumUserRole, Permission } from 'src/enum';
-import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository';
-import { BaseService } from 'src/services/base.service';
-import { isGranted } from 'src/utils/access';
-import { addAssets, removeAssets } from 'src/utils/asset.util';
-import { asDateTimeString } from 'src/utils/date';
-import { getPreferences } from 'src/utils/preferences';
+  mapAlbum,
+} from 'src/dtos/album.dto.js';
+import { BulkIdErrorReason, BulkIdResponseDto, BulkIdsDto } from 'src/dtos/asset-ids.response.dto.js';
+import { AuthDto } from 'src/dtos/auth.dto.js';
+import { MapMarkerResponseDto } from 'src/dtos/map.dto.js';
+import { AlbumUserRole, Permission } from 'src/enum.js';
+import { AlbumAssetCount, AlbumInfoOptions } from 'src/repositories/album.repository.js';
+import { BaseService } from 'src/services/base.service.js';
+import { isGranted } from 'src/utils/access.js';
+import { addAssets, removeAssets } from 'src/utils/asset.util.js';
+import { asDateTimeString } from 'src/utils/date.js';
+import { findOrFail } from 'src/utils/misc.js';
+import { getPreferences } from 'src/utils/preferences.js';
 
 @Injectable()
 export class AlbumService extends BaseService {
@@ -187,7 +188,7 @@ export class AlbumService extends BaseService {
     const results = await addAssets(
       auth,
       { access: this.accessRepository, bulk: this.albumRepository },
-      { parentId: id, assetIds: dto.ids },
+      { parentId: id, assetIds: dto.ids, permission: Permission.AssetShare },
     );
 
     // Precedence upgrade: an asset already in the album via a library grant, for which the requester now has
@@ -296,11 +297,11 @@ export class AlbumService extends BaseService {
       }
 
       const existingAssetIds = await this.albumRepository.getAssetIds(albumId, [...candidateAssetIds]);
-      const notPresentAssetIds = [...candidateAssetIds].filter((assetId) => !existingAssetIds.has(assetId));
+      const notPresentAssetIds = [...candidateAssetIds.difference(existingAssetIds)];
 
       // Precedence upgrade: an asset already in this album via a library grant, for which the requester now has
       // genuine durable AssetShare access, gets upgraded to a durable (null-provenance) grant.
-      const alreadyPresentDurableCandidates = [...assetShareIds].filter((assetId) => existingAssetIds.has(assetId));
+      const alreadyPresentDurableCandidates = [...assetShareIds.intersection(existingAssetIds)];
       if (alreadyPresentDurableCandidates.length > 0) {
         await this.albumRepository.upgradeProvenanceGrants(albumId, alreadyPresentDurableCandidates);
       }
@@ -476,11 +477,7 @@ export class AlbumService extends BaseService {
     return grants;
   }
 
-  private async findOrFail(id: string, authUserId: string, options: AlbumInfoOptions) {
-    const album = await this.albumRepository.getById(id, options, authUserId);
-    if (!album) {
-      throw new BadRequestException('Album not found');
-    }
-    return album;
+  private findOrFail(id: string, authUserId: string, options: AlbumInfoOptions) {
+    return findOrFail(() => this.albumRepository.getById(id, options, authUserId), 'Album');
   }
 }

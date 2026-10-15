@@ -239,6 +239,17 @@ where
     "albumAssets"."livePhotoVideoId"
   ] && array[$2]::uuid[]
 
+-- AccessRepository.assetFile.checkOwnerAccess
+select
+  "asset_file"."id"
+from
+  "asset_file"
+  inner join "asset" on "asset"."id" = "asset_file"."assetId"
+where
+  "asset"."visibility" != $1
+  and "asset"."ownerId" = $2
+  and "asset_file"."id" in ($3)
+
 -- AccessRepository.authDevice.checkOwnerAccess
 select
   "session"."id"
@@ -327,14 +338,83 @@ where
   "notification"."id" in ($1)
   and "notification"."userId" = $2
 
--- AccessRepository.person.checkOwnerAccess
+-- AccessRepository.clusterGroup.checkInviteAccess
 select
-  "person"."id"
+  "cluster_group_request"."clusterGroupId"
 from
-  "person"
+  "cluster_group_request"
 where
-  "person"."id" in ($1)
-  and "person"."ownerId" = $2
+  "cluster_group_request"."clusterGroupId" in ($1)
+  and "cluster_group_request"."userId" = $2
+
+-- AccessRepository.clusterGroup.checkOwnerAccess
+select
+  "user"."clusterGroupId"
+from
+  "user"
+where
+  "user"."clusterGroupId" in ($1)
+  and "user"."id" = $2
+
+-- AccessRepository.clusterGroupRequest.checkOwnerAccess
+select
+  "cluster_group_request"."id"
+from
+  "cluster_group_request"
+where
+  "cluster_group_request"."id" in ($1)
+  and "cluster_group_request"."userId" = $2
+
+-- AccessRepository.clusterGroupRequest.checkGroupAccess
+select
+  "cluster_group_request"."id"
+from
+  "cluster_group_request"
+where
+  "cluster_group_request"."id" in ($1)
+  and "cluster_group_request"."clusterGroupId" = (
+    select
+      "user"."clusterGroupId"
+    from
+      "user"
+    where
+      "user"."id" = $2
+  )
+
+-- AccessRepository.person.checkAccess
+select
+  "personGroupId",
+  "ownerId"
+from
+  (
+    select
+      unnest($1::uuid[]) as "personGroupId",
+      unnest($2::uuid[]) as "ownerId"
+  ) as "people"
+where
+  (
+    exists (
+      select
+        *
+      from
+        "person"
+      where
+        "people"."personGroupId" = "person"."personGroupId"
+        and "people"."ownerId" = "person"."ownerId"
+        and "person"."ownerId" = $3
+    )
+    or exists (
+      select
+        *
+      from
+        "person_user"
+      where
+        "person_user"."sharedWithId" = $4
+        and "person_user"."role" in ($5)
+        and "people"."personGroupId" = "person_user"."personGroupId"
+        and "people"."ownerId" = "person_user"."sharedById"
+    )
+  )
 
 -- AccessRepository.person.checkFaceOwnerAccess
 select
@@ -363,11 +443,13 @@ where
 
 -- AccessRepository.person.checkLibraryPersonScope
 select
-  "person"."id"
+  "person"."personGroupId"
 from
   "person"
+  inner join "library" on "library"."ownerId" = "person"."ownerId"
+  and "library"."id" = $1
 where
-  "person"."id" in ($1)
+  "person"."personGroupId" in ($2)
   and exists (
     select
     from
@@ -375,21 +457,21 @@ where
       inner join "asset" on "asset"."id" = "asset_face"."assetId"
       and "asset"."deletedAt" is null
     where
-      "asset_face"."personId" = "person"."id"
+      "asset_face"."personGroupId" = "person"."personGroupId"
       and "asset_face"."deletedAt" is null
-      and "asset_face"."isVisible" = $2
-      and "asset"."libraryId" = $3
+      and "asset_face"."isVisible" = $3
+      and "asset"."libraryId" = $4
       and "asset"."visibility" = 'timeline'
   )
 
 -- AccessRepository.person.checkSharedLibraryPersonAccess
 select
-  "person"."id"
+  "person"."ownerId",
+  "person"."personGroupId"
 from
   "person"
 where
-  "person"."id" in ($1)
-  and "person"."isHidden" = $2
+  "person"."isHidden" = $1
   and exists (
     select
     from
@@ -397,18 +479,49 @@ where
       inner join "asset" on "asset"."id" = "asset_face"."assetId"
       and "asset"."deletedAt" is null
       inner join "library" on "library"."id" = "asset"."libraryId"
+      and "library"."ownerId" = "person"."ownerId"
       and "library"."deletedAt" is null
       inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
       and "owner"."deletedAt" is null
       inner join "library_user" on "library_user"."libraryId" = "library"."id"
-      and "library_user"."userId" = $3
-      and "library_user"."inTimeline" = $4
+      and "library_user"."userId" = $2
+      and "library_user"."inTimeline" = $3
     where
-      "asset_face"."personId" = "person"."id"
+      "asset_face"."personGroupId" = "person"."personGroupId"
       and "asset_face"."deletedAt" is null
-      and "asset_face"."isVisible" = $5
+      and "asset_face"."isVisible" = $4
       and "asset"."visibility" = 'timeline'
   )
+  and "person"."personGroupId" in ($5)
+
+-- AccessRepository.person.checkSharedLibraryPersonGroupAccess
+select distinct
+  "person"."personGroupId"
+from
+  "person"
+where
+  "person"."isHidden" = $1
+  and exists (
+    select
+    from
+      "asset_face"
+      inner join "asset" on "asset"."id" = "asset_face"."assetId"
+      and "asset"."deletedAt" is null
+      inner join "library" on "library"."id" = "asset"."libraryId"
+      and "library"."ownerId" = "person"."ownerId"
+      and "library"."deletedAt" is null
+      inner join "user" as "owner" on "owner"."id" = "library"."ownerId"
+      and "owner"."deletedAt" is null
+      inner join "library_user" on "library_user"."libraryId" = "library"."id"
+      and "library_user"."userId" = $2
+      and "library_user"."inTimeline" = $3
+    where
+      "asset_face"."personGroupId" = "person"."personGroupId"
+      and "asset_face"."deletedAt" is null
+      and "asset_face"."isVisible" = $4
+      and "asset"."visibility" = 'timeline'
+  )
+  and "person"."personGroupId" in ($5)
 
 -- AccessRepository.person.checkPersonExclusiveToLibrary
 select
@@ -426,8 +539,10 @@ select
 from
   "asset_face"
   inner join "asset" on "asset"."id" = "asset_face"."assetId"
+  inner join "library" on "library"."ownerId" = "asset"."ownerId"
+  and "library"."id" = $3
 where
-  "asset_face"."personId" = $3
+  "asset_face"."personGroupId" = $4
   and "asset_face"."deletedAt" is null
 
 -- AccessRepository.partner.checkUpdateAccess

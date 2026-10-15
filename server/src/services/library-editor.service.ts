@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AssetResponseDto, mapAsset } from 'src/dtos/asset-response.dto';
-import { AuthDto } from 'src/dtos/auth.dto';
-import { LibraryAssetBulkUpdateDto, LibraryAssetUpdateDto } from 'src/dtos/library-editor.dto';
+import { AssetResponseDto, mapAsset } from 'src/dtos/asset-response.dto.js';
+import { AuthDto } from 'src/dtos/auth.dto.js';
+import { LibraryAssetBulkUpdateDto, LibraryAssetUpdateDto } from 'src/dtos/library-editor.dto.js';
 import {
   LibraryFaceAssignDto,
   LibraryFaceResponseDto,
@@ -13,14 +13,14 @@ import {
   LibraryPersonUpdateDto,
   mapLibraryFace,
   mapLibraryPerson,
-} from 'src/dtos/library-person.dto';
-import { JobName, Permission } from 'src/enum';
-import { LibraryAssetMetadataEdit } from 'src/repositories/asset.repository';
-import { BaseService } from 'src/services/base.service';
-import { JobItem } from 'src/types';
-import { getDimensions } from 'src/utils/asset.util';
-import { extractTimeZone } from 'src/utils/date';
-import { Point, transformPoints } from 'src/utils/transform';
+} from 'src/dtos/library-person.dto.js';
+import { JobName, Permission } from 'src/enum.js';
+import { LibraryAssetMetadataEdit } from 'src/repositories/asset.repository.js';
+import { BaseService } from 'src/services/base.service.js';
+import { JobItem } from 'src/types.js';
+import { getDimensions } from 'src/utils/asset.util.js';
+import { extractTimeZone } from 'src/utils/date.js';
+import { Point, transformPoints } from 'src/utils/transform.js';
 
 @Injectable()
 export class LibraryEditorService extends BaseService {
@@ -156,7 +156,7 @@ export class LibraryEditorService extends BaseService {
       );
     }
 
-    await this.queueFeaturePhotoRefresh(result.needsFeaturePhoto);
+    await this.queueFeaturePhotoRefresh(result.ownerId, result.needsFeaturePhoto);
 
     const created = await this.personRepository.getOneForLibrary(libraryId, result.personId);
     if (!created) {
@@ -202,13 +202,16 @@ export class LibraryEditorService extends BaseService {
       );
     }
 
-    await this.queueFeaturePhotoRefresh(result.needsFeaturePhoto);
+    await this.queueFeaturePhotoRefresh(result.ownerId, result.needsFeaturePhoto);
 
-    const faces = await Promise.all(dto.faceIds.map((faceId) => this.personRepository.getFaceById(faceId)));
+    // the library owner's view of each face's person (person ids are group ids)
+    const faces = await Promise.all(
+      dto.faceIds.map((faceId) => this.personRepository.getFaceById(faceId, { viewingUserId: result.ownerId })),
+    );
     return faces.map((face) =>
       mapLibraryFace({
         ...face,
-        person: face.person && { id: face.person.id, name: face.person.name },
+        person: face.person && { id: face.person.personGroupId, name: face.person.name },
       }),
     );
   }
@@ -285,9 +288,9 @@ export class LibraryEditorService extends BaseService {
       );
     }
 
-    await this.queueFeaturePhotoRefresh(result.needsFeaturePhoto);
+    await this.queueFeaturePhotoRefresh(result.ownerId, result.needsFeaturePhoto);
 
-    const person = await this.personRepository.getById(dto.personId);
+    const person = await this.personRepository.getByGroupId({ ownerId: result.ownerId, personGroupId: dto.personId });
     return mapLibraryFace({
       id: result.faceId,
       assetId: dto.assetId,
@@ -297,15 +300,18 @@ export class LibraryEditorService extends BaseService {
       boundingBoxX2: Math.round(bottomRight.x),
       boundingBoxY1: Math.round(topLeft.y),
       boundingBoxY2: Math.round(bottomRight.y),
-      person: person ? { id: person.id, name: person.name } : null,
+      person: person ? { id: person.personGroupId, name: person.name } : null,
     });
   }
 
-  private async queueFeaturePhotoRefresh(personIds: string[]): Promise<void> {
-    if (personIds.length === 0) {
+  private async queueFeaturePhotoRefresh(ownerId: string, personGroupIds: string[]): Promise<void> {
+    if (personGroupIds.length === 0) {
       return;
     }
-    const jobs: JobItem[] = personIds.map((id) => ({ name: JobName.PersonGenerateThumbnail, data: { id } }));
+    const jobs: JobItem[] = personGroupIds.map((personGroupId) => ({
+      name: JobName.PersonGenerateThumbnail,
+      data: { ownerId, personGroupId },
+    }));
     await this.jobRepository.queueAll(jobs);
   }
 }

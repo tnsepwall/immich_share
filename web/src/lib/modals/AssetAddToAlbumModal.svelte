@@ -32,4 +32,4 @@
   };
 </script>
 
-<AlbumPickerModal onClose={handleClose} {restrictToOwnedAlbums} />
+<AlbumPickerModal selectedItemsCount={assetIds.length} onClose={handleClose} {restrictToOwnedAlbums} />

@@ -1,14 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { ExpressionBuilder, Insertable, Kysely, NotNull, sql, Updateable } from 'kysely';
+import { ExpressionBuilder, Insertable, Kysely, NotNull, type Updateable, sql } from 'kysely';
 import { jsonObjectFrom } from 'kysely/helpers/postgres';
 import { InjectKysely } from 'nestjs-kysely';
-import { columns } from 'src/database';
-import { DummyValue, GenerateSql } from 'src/decorators';
-import { LibraryStatsResponseDto } from 'src/dtos/library.dto';
-import { AssetType, AssetVisibility, LibraryUserRole } from 'src/enum';
-import { DB } from 'src/schema';
-import { LibraryUserTable } from 'src/schema/tables/library-user.table';
-import { LibraryTable } from 'src/schema/tables/library.table';
+import { columns } from 'src/database.js';
+import { DummyValue, GenerateSql } from 'src/decorators.js';
+import { LibraryStatsResponseDto } from 'src/dtos/library.dto.js';
+import { AssetType, AssetVisibility, LibraryUserRole } from 'src/enum.js';
+import { DB } from 'src/schema/index.js';
+import { LibraryUserTable } from 'src/schema/tables/library-user.table.js';
+import { LibraryTable } from 'src/schema/tables/library.table.js';
 
 export enum AssetSyncResult {
   DO_NOTHING,
@@ -117,6 +117,7 @@ export class LibraryRepository {
           .as('videos'),
       )
       .select((eb) => eb.fn.coalesce((eb) => eb.fn.sum('asset_exif.fileSizeInByte'), eb.val(0)).as('usage'))
+      .where('asset.deletedAt', 'is', null)
       .groupBy('library.id')
       .where('library.id', '=', id)
       .executeTakeFirst();

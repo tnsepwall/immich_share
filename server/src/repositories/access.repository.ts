@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { Kysely, NotNull, sql } from 'kysely';
+import { type Kysely, type NotNull, sql } from 'kysely';
 import { InjectKysely } from 'nestjs-kysely';
-import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators';
-import { AlbumUserRole, AssetVisibility, LibraryUserRole } from 'src/enum';
-import { DB } from 'src/schema';
-import { asUuid, withAlbumAssetProvenance } from 'src/utils/database';
+import { ChunkedSet, DummyValue, GenerateSql } from 'src/decorators.js';
+import { PersonUserRole } from 'src/dtos/person.dto.js';
+import { AlbumUserRole, AssetVisibility, LibraryUserRole } from 'src/enum.js';
+import { PersonId } from 'src/repositories/person.repository.js';
+import { DB } from 'src/schema/index.js';
+import { asUuid, withAlbumAssetProvenance } from 'src/utils/database.js';
 
 class ActivityAccess {
   constructor(private db: Kysely<DB>) {}
@@ -391,6 +393,28 @@ class AssetAccess {
   }
 }
 
+class AssetFileAccess {
+  constructor(private db: Kysely<DB>) {}
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkOwnerAccess(userId: string, fileIds: Set<string>, hasElevatedPermission: boolean | undefined) {
+    if (fileIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('asset_file')
+      .select('asset_file.id')
+      .innerJoin('asset', 'asset.id', 'asset_file.assetId')
+      .$if(!hasElevatedPermission, (eb) => eb.where('asset.visibility', '!=', AssetVisibility.Locked))
+      .where('asset.ownerId', '=', userId)
+      .where('asset_file.id', 'in', [...fileIds])
+      .execute()
+      .then((files) => new Set(files.map(({ id }) => id)));
+  }
+}
+
 class AuthDeviceAccess {
   constructor(private db: Kysely<DB>) {}
 
@@ -625,23 +649,131 @@ class MemoryAccess {
   }
 }
 
-class PersonAccess {
+class ClusterGroupAccess {
   constructor(private db: Kysely<DB>) {}
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
-  async checkOwnerAccess(userId: string, personIds: Set<string>) {
-    if (personIds.size === 0) {
+  checkInviteAccess(userId: string, clusterGroupIds: Set<string>) {
+    if (clusterGroupIds.size === 0) {
       return new Set<string>();
     }
 
     return this.db
-      .selectFrom('person')
-      .select('person.id')
-      .where('person.id', 'in', [...personIds])
-      .where('person.ownerId', '=', userId)
+      .selectFrom('cluster_group_request')
+      .select('cluster_group_request.clusterGroupId')
+      .where('cluster_group_request.clusterGroupId', 'in', [...clusterGroupIds])
+      .where('cluster_group_request.userId', '=', userId)
       .execute()
-      .then((persons) => new Set(persons.map((person) => person.id)));
+      .then((requests) => new Set(requests.map((request) => request.clusterGroupId)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkOwnerAccess(userId: string, clusterGroupIds: Set<string>) {
+    if (clusterGroupIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('user')
+      .select('user.clusterGroupId')
+      .where('user.clusterGroupId', 'in', [...clusterGroupIds])
+      .where('user.id', '=', userId)
+      .execute()
+      .then((users) => new Set(users.map((user) => user.clusterGroupId)));
+  }
+}
+
+class ClusterGroupRequestAccess {
+  constructor(private db: Kysely<DB>) {}
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  checkOwnerAccess(userId: string, clusterGroupRequestIds: Set<string>) {
+    if (clusterGroupRequestIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('cluster_group_request')
+      .select('cluster_group_request.id')
+      .where('cluster_group_request.id', 'in', [...clusterGroupRequestIds])
+      .where('cluster_group_request.userId', '=', userId)
+      .execute()
+      .then((requests) => new Set(requests.map(({ id }) => id)));
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  checkGroupAccess(userId: string, clusterGroupRequestIds: Set<string>) {
+    if (clusterGroupRequestIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.db
+      .selectFrom('cluster_group_request')
+      .select('cluster_group_request.id')
+      .where('cluster_group_request.id', 'in', [...clusterGroupRequestIds])
+      .where('cluster_group_request.clusterGroupId', '=', (eb) =>
+        eb.selectFrom('user').select('user.clusterGroupId').where('user.id', '=', userId),
+      )
+      .execute()
+      .then((requests) => new Set(requests.map(({ id }) => id)));
+  }
+}
+
+class PersonAccess {
+  constructor(private db: Kysely<DB>) {}
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET, [PersonUserRole.Admin]] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkAccess(userId: string, personIds: Set<PersonId>, roles: PersonUserRole[]) {
+    if (personIds.size === 0 || roles.length === 0) {
+      return new Set<PersonId>();
+    }
+
+    const personGroupIds = personIds
+      .values()
+      .map(({ personGroupId }) => personGroupId)
+      .toArray();
+    const ownerIds = personIds
+      .values()
+      .map(({ ownerId }) => ownerId)
+      .toArray();
+
+    return this.db
+      .selectFrom(
+        sql<{ personGroupId: string; ownerId: string }>`(
+      select
+        unnest(${personGroupIds}::uuid[]) as "personGroupId",
+        unnest(${ownerIds}::uuid[]) as "ownerId"
+    )`.as('people'),
+      )
+      .select(['personGroupId', 'ownerId'])
+      .where((eb) =>
+        eb.or([
+          eb.exists(
+            eb
+              .selectFrom('person')
+              .whereRef('people.personGroupId', '=', 'person.personGroupId')
+              .whereRef('people.ownerId', '=', 'person.ownerId')
+              .where('person.ownerId', '=', userId)
+              .selectAll(),
+          ),
+          eb.exists(
+            eb
+              .selectFrom('person_user')
+              .where('person_user.sharedWithId', '=', userId)
+              .where('person_user.role', 'in', roles)
+              .whereRef('people.personGroupId', '=', 'person_user.personGroupId')
+              .whereRef('people.ownerId', '=', 'person_user.sharedById')
+              .selectAll(),
+          ),
+        ]),
+      )
+      .execute()
+      .then((items) => new Set(items));
   }
 
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
@@ -686,6 +818,7 @@ class PersonAccess {
       .then((faces) => new Set(faces.map((face) => face.id)));
   }
 
+  // Person ids here are person GROUP ids; the person in scope is the library OWNER's row of the group.
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
   @ChunkedSet({ paramIndex: 1 })
   async checkLibraryPersonScope(libraryId: string, personIds: Set<string>) {
@@ -695,8 +828,11 @@ class PersonAccess {
 
     return this.db
       .selectFrom('person')
-      .select('person.id')
-      .where('person.id', 'in', [...personIds])
+      .innerJoin('library', (join) =>
+        join.onRef('library.ownerId', '=', 'person.ownerId').on('library.id', '=', libraryId),
+      )
+      .select('person.personGroupId')
+      .where('person.personGroupId', 'in', [...personIds])
       .where((eb) =>
         eb.exists(
           eb
@@ -704,7 +840,7 @@ class PersonAccess {
             .innerJoin('asset', (join) =>
               join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
             )
-            .whereRef('asset_face.personId', '=', 'person.id')
+            .whereRef('asset_face.personGroupId', '=', 'person.personGroupId')
             .where('asset_face.deletedAt', 'is', null)
             .where('asset_face.isVisible', '=', true)
             .where('asset.libraryId', '=', libraryId)
@@ -712,7 +848,7 @@ class PersonAccess {
         ),
       )
       .execute()
-      .then((persons) => new Set(persons.map((person) => person.id)));
+      .then((persons) => new Set(persons.map((person) => person.personGroupId)));
   }
 
   // Phase 5 (§5.1): general (not single-library-scoped) reachability check backing the SPLIT
@@ -721,18 +857,11 @@ class PersonAccess {
   // that's shared with the caller AND has `library_user.inTimeline = true` (the same flag that gates
   // the main timeline/explore/map/search widening - reachability alone is not enough, matching the
   // dedicated-library-editor's checkLibraryPersonScope shape but without pinning to one library id).
-  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
-  @ChunkedSet({ paramIndex: 1 })
-  async checkSharedLibraryPersonAccess(userId: string, personIds: Set<string>) {
-    if (personIds.size === 0) {
-      return new Set<string>();
-    }
-
+  // On the v3.3 person model the reachable row is the library owner's: `person.ownerId = library.ownerId`.
+  private sharedLibraryReachablePeople(userId: string) {
     return (
       this.db
         .selectFrom('person')
-        .select('person.id')
-        .where('person.id', 'in', [...personIds])
         // Review finding fix (plan §5.3): a person the OWNER has hidden must be excluded from ALL
         // sharee-facing surfaces, including this by-id reachability check - otherwise a sharee retains
         // name/thumbnail/personId-filter access to a hidden person they can no longer see in listings.
@@ -745,7 +874,10 @@ class PersonAccess {
                 join.onRef('asset.id', '=', 'asset_face.assetId').on('asset.deletedAt', 'is', null),
               )
               .innerJoin('library', (join) =>
-                join.onRef('library.id', '=', 'asset.libraryId').on('library.deletedAt', 'is', null),
+                join
+                  .onRef('library.id', '=', 'asset.libraryId')
+                  .onRef('library.ownerId', '=', 'person.ownerId')
+                  .on('library.deletedAt', 'is', null),
               )
               .innerJoin('user as owner', (join) =>
                 join.onRef('owner.id', '=', 'library.ownerId').on('owner.deletedAt', 'is', null),
@@ -756,15 +888,48 @@ class PersonAccess {
                   .on('library_user.userId', '=', userId)
                   .on('library_user.inTimeline', '=', true),
               )
-              .whereRef('asset_face.personId', '=', 'person.id')
+              .whereRef('asset_face.personGroupId', '=', 'person.personGroupId')
               .where('asset_face.deletedAt', 'is', null)
               .where('asset_face.isVisible', '=', true)
               .where('asset.visibility', '=', sql.lit(AssetVisibility.Timeline)),
           ),
         )
-        .execute()
-        .then((persons) => new Set(persons.map((person) => person.id)))
     );
+  }
+
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryPersonAccess(userId: string, personIds: Set<PersonId>) {
+    if (personIds.size === 0) {
+      return new Set<PersonId>();
+    }
+
+    const rows = await this.sharedLibraryReachablePeople(userId)
+      .select(['person.ownerId', 'person.personGroupId'])
+      .where(
+        'person.personGroupId',
+        'in',
+        [...personIds].map(({ personGroupId }) => personGroupId),
+      )
+      .execute();
+    const reachable = new Set(rows.map(({ ownerId, personGroupId }) => `${ownerId}/${personGroupId}`));
+    return new Set([...personIds].filter(({ ownerId, personGroupId }) => reachable.has(`${ownerId}/${personGroupId}`)));
+  }
+
+  // Group-id form of checkSharedLibraryPersonAccess, for person ids used as filters (search, timeline).
+  @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID_SET] })
+  @ChunkedSet({ paramIndex: 1 })
+  async checkSharedLibraryPersonGroupAccess(userId: string, personGroupIds: Set<string>) {
+    if (personGroupIds.size === 0) {
+      return new Set<string>();
+    }
+
+    return this.sharedLibraryReachablePeople(userId)
+      .select('person.personGroupId')
+      .distinct()
+      .where('person.personGroupId', 'in', [...personGroupIds])
+      .execute()
+      .then((persons) => new Set(persons.map((person) => person.personGroupId)));
   }
 
   // Required before an Editor renames a person: true only when the person has at least one (non-deleted-asset)
@@ -774,10 +939,14 @@ class PersonAccess {
   // if dormant, footprint that must still block the rename. The join carries no asset.deletedAt filter on
   // either side; only genuinely deleted (hard-removed) rows drop out, via the asset_face WHERE clause below.
   @GenerateSql({ params: [DummyValue.UUID, DummyValue.UUID] })
-  async checkPersonExclusiveToLibrary(libraryId: string, personId: string): Promise<boolean> {
+  async checkPersonExclusiveToLibrary(libraryId: string, personGroupId: string): Promise<boolean> {
     const result = await this.db
       .selectFrom('asset_face')
       .innerJoin('asset', 'asset.id', 'asset_face.assetId')
+      // only the library owner's assets: other cluster-group members' faces share the group, not this person row
+      .innerJoin('library', (join) =>
+        join.onRef('library.ownerId', '=', 'asset.ownerId').on('library.id', '=', libraryId),
+      )
       .select((eb) => [
         eb.fn.countAll<number>().filterWhere('asset.libraryId', '=', libraryId).as('insideCount'),
         eb.fn
@@ -785,7 +954,7 @@ class PersonAccess {
           .filterWhere((eb) => eb.or([eb('asset.libraryId', 'is', null), eb('asset.libraryId', '!=', libraryId)]))
           .as('outsideCount'),
       ])
-      .where('asset_face.personId', '=', personId)
+      .where('asset_face.personGroupId', '=', personGroupId)
       .where('asset_face.deletedAt', 'is', null)
       .executeTakeFirst();
 
@@ -858,11 +1027,14 @@ export class AccessRepository {
   activity: ActivityAccess;
   album: AlbumAccess;
   asset: AssetAccess;
+  assetFile: AssetFileAccess;
   authDevice: AuthDeviceAccess;
   duplicate: DuplicateAccess;
   library: LibraryAccess;
   memory: MemoryAccess;
   notification: NotificationAccess;
+  clusterGroup: ClusterGroupAccess;
+  clusterGroupRequest: ClusterGroupRequestAccess;
   person: PersonAccess;
   partner: PartnerAccess;
   session: SessionAccess;
@@ -875,11 +1047,14 @@ export class AccessRepository {
     this.activity = new ActivityAccess(db);
     this.album = new AlbumAccess(db);
     this.asset = new AssetAccess(db);
+    this.assetFile = new AssetFileAccess(db);
     this.authDevice = new AuthDeviceAccess(db);
     this.duplicate = new DuplicateAccess(db);
     this.library = new LibraryAccess(db);
     this.memory = new MemoryAccess(db);
     this.notification = new NotificationAccess(db);
+    this.clusterGroup = new ClusterGroupAccess(db);
+    this.clusterGroupRequest = new ClusterGroupRequestAccess(db);
     this.person = new PersonAccess(db);
     this.partner = new PartnerAccess(db);
     this.session = new SessionAccess(db);

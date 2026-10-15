@@ -1,9 +1,9 @@
-import { PartnerRepository } from 'src/repositories/partner.repository';
-import { SessionRepository } from 'src/repositories/session.repository';
-import { SyncRepository } from 'src/repositories/sync.repository';
-import { maybeResetForSharedLibraryTransition, resolveSharedLibraryTransition } from 'src/utils/shared-library-sync';
-import { factory } from 'test/small.factory';
 import { Mocked, vi } from 'vitest';
+import { PartnerRepository } from 'src/repositories/partner.repository.js';
+import { SessionRepository } from 'src/repositories/session.repository.js';
+import { SyncRepository } from 'src/repositories/sync.repository.js';
+import { maybeResetForSharedLibraryTransition, resolveSharedLibraryTransition } from 'src/utils/shared-library-sync.js';
+import { factory } from 'test/small.factory.js';
 
 // Shared by both describe blocks below - a pure factory with no closure dependencies, so it lives at
 // module scope rather than being redefined per describe block (unicorn/consistent-function-scoping).

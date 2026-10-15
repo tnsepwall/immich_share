@@ -26,6 +26,7 @@ export interface MapSettings {
   withPartners: boolean;
   withSharedAlbums: boolean;
   withSharedLibraries: boolean;
+  showAssetPanel: boolean;
   relativeDate: string;
   dateAfter?: string;
   dateBefore?: string;
@@ -38,6 +39,7 @@ const defaultMapSettings = {
   withPartners: false,
   withSharedAlbums: false,
   withSharedLibraries: false,
+  showAssetPanel: false,
   relativeDate: '',
 };
 
@@ -70,11 +72,6 @@ export interface PlacesViewSettings {
     // Grouping Option => Array<Group ID>
     [group: string]: string[];
   };
-}
-
-export interface SidebarSettings {
-  people: boolean;
-  sharing: boolean;
 }
 
 export enum SortOrder {

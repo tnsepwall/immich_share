@@ -228,7 +228,8 @@ select
             from
               "person"
             where
-              "asset_face"."personId" = "person"."id"
+              "person"."personGroupId" = "asset_face"."personGroupId"
+              and "person"."ownerId" = "asset"."ownerId"
           ) as "person" on true
         where
           "asset_face"."assetId" = "asset"."id"
@@ -483,7 +484,8 @@ with
       )
     order by
       (asset."localDateTime" AT TIME ZONE 'UTC')::date desc,
-      "asset"."fileCreatedAt" desc
+      "asset"."fileCreatedAt" desc,
+      "asset"."originalFileName" desc
   ),
   "agg" as (
     select
@@ -583,7 +585,7 @@ where
   and "libraryId" = $5::uuid
   and (
     not "originalPath" like $6
-    or "originalPath" like $7
+    or "originalPath" ~* $7
   )
 
 -- AssetRepository.filterNewExternalAssetPaths
